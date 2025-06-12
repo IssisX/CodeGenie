@@ -1,1111 +1,1399 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import * as CANNON from 'cannon-es';
-import CannonDebugger from 'cannon-es-debugger'; // Keep for debugging if needed
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, query, where, deleteDoc } from "firebase/firestore";
+import React, { useState, useEffect, useRef } from 'react';
+import { create } from 'zustand';
+import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb, LucideActivity } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
 
-import {
-    ChevronDown, ChevronUp, Swords, Wrench, X, Menu, Bot, Coins, Weight, Square,
-    RotateCw, Trash2, Save, TestTube2, Heart, Shield, Timer, Loader2, ArrowLeft, ChevronsRight
-} from 'lucide-react';
+// --- ZUSTAND STATE MANAGEMENT STORE (v2.7) ---
 
-// --- FIREBASE CONFIGURATION ---
-// IMPORTANT: This configuration is a placeholder. In a real application,
-// you would replace this with your actual Firebase project configuration.
-// The __firebase_config global variable will be provided in the runtime environment.
-const firebaseConfig = typeof __firebase_config !== 'undefined'
-    ? JSON.parse(__firebase_config)
-    : {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_AUTH_DOMAIN",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_STORAGE_BUCKET",
-        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-        appId: "YOUR_APP_ID"
-    };
-
-// --- DATA DEFINITIONS ---
-const PART_DEFINITIONS = {
-    chassis: {
-        id: 'chassis',
-        name: 'Chassis',
-        icon: <Square size={24} />,
-        items: {
-            chassis_light: { name: 'Light Chassis', weight: 5, cost: 150, armor: 15, health: 80, power: 10, description: 'Fast and agile, perfect for hit-and-run tactics.', geometry: { type: 'box', size: [2, 0.4, 3] }, color: 0x9D9D9D, attachmentPoints: [{ pos: [0, 0.2, 0.8], type: ['weapon', 'utility'] }, { pos: [0, 0.2, -0.8], type: ['utility'] }] },
-            chassis_medium: { name: 'Medium Chassis', weight: 12, cost: 300, armor: 30, health: 120, power: 20, description: 'Balanced design for versatile combat.', geometry: { type: 'box', size: [2.5, 0.5, 3.5] }, color: 0x808080, attachmentPoints: [{ pos: [0, 0.25, 1], type: ['weapon'] }, { pos: [0.8, 0.25, -0.5], type: ['utility'] }, { pos: [-0.8, 0.25, -0.5], type: ['utility'] }] },
-            chassis_heavy: { name: 'Heavy Chassis', weight: 25, cost: 500, armor: 50, health: 200, power: 15, description: 'Maximum protection and stability.', geometry: { type: 'box', size: [3, 0.6, 4] }, color: 0x6A6A6A, attachmentPoints: [{ pos: [0, 0.3, 1.2], type: ['weapon', 'heavy_weapon'] }, { pos: [1, 0.3, 0], type: ['weapon'] }, { pos: [-1, 0.3, 0], type: ['weapon'] }, { pos: [0, 0.3, -1.2], type: ['utility'] }] },
-            chassis_wedge: { name: 'Wedge Chassis', weight: 18, cost: 400, armor: 35, health: 150, power: 18, description: 'Wedge design for getting under opponents.', geometry: { type: 'wedge', size: [2.5, 0.5, 3] }, color: 0x7B7B8F, attachmentPoints: [{ pos: [0, 0.25, 0], type: ['weapon'] }] },
-        }
+const PERSONAS_CONFIG = {
+    'Generalist': {
+        avatarName: 'LucideBrainCircuit',
+        description: 'Versatile agent for various web tasks.',
+        capabilities: ['Focus on clear, maintainable code.', 'Ensure responsive design.']
     },
-    weapons: {
-        id: 'weapons',
-        name: 'Weapons',
-        icon: <Swords size={24} />,
-        items: {
-            weapon_saw: { name: 'Buzzsaw', type: 'weapon', weight: 8, cost: 400, power: 25, damage: 35, description: 'High-speed spinning blade for continuous damage.', geometry: { type: 'cylinder', size: [1.2, 0.1, 16] }, color: 0xAAAAAA },
-            weapon_hammer: { name: 'War Hammer', type: 'heavy_weapon', weight: 15, cost: 600, power: 40, damage: 60, description: 'Pneumatic hammer for devastating single hits.', geometry: { type: 'box', size: [0.8, 0.8, 0.8] }, color: 0x444444 },
-            weapon_flipper: { name: 'Launcher Arm', type: 'weapon', weight: 12, cost: 700, power: 35, damage: 30, description: 'Powerful flipper to launch opponents airborne.', geometry: { type: 'box', size: [1.5, 0.2, 2] }, color: 0x5555AA },
-        }
+    'Creative Maverick': {
+        avatarName: 'LucidePalette',
+        description: 'Specializes in visually appealing UIs and novel interactions.',
+        capabilities: ['Prioritize modern UI/UX principles.', 'Suggest creative visual elements.']
     },
-    mobility: {
-        id: 'mobility',
-        name: 'Mobility',
-        icon: <Bot size={24} />,
-        items: {
-            mobility_wheels: { name: 'High-Speed Wheels', type: 'mobility', weight: 3, cost: 120, speed: 25, traction: 0.8, description: 'High-speed wheels for maximum agility.', geometry: { type: 'cylinder', size: [0.5, 0.3, 16] }, color: 0x222222 },
-            mobility_treads: { name: 'Tank Treads', type: 'mobility', weight: 8, cost: 200, speed: 15, traction: 1.2, description: 'Tank treads for superior grip and stability.', geometry: { type: 'box', size: [2, 0.4, 0.8] }, color: 0x333333 },
-        }
+    'Data Architect': {
+        avatarName: 'LucideDatabase',
+        description: 'Focuses on robust data models and API interactions.',
+        capabilities: ['Design efficient data structures.', 'Ensure secure and reliable API communication.']
     },
+    'UI Specialist': {
+        avatarName: 'LucideComponent',
+        description: 'Expert in crafting detailed UI components and stylesheets.',
+        capabilities: ['Generate clean HTML and CSS.', 'Implement pixel-perfect component designs.']
+    }
 };
 
-// Flattened parts map for easy lookup
-const ALL_PARTS = Object.values(PART_DEFINITIONS).reduce((acc, category) => {
-    Object.entries(category.items).forEach(([key, value]) => {
-        acc[key] = { ...value, categoryId: category.id };
-    });
-    return acc;
-}, {});
+const getAvatarComponent = (avatarName) => {
+    const icons = { LucideBrainCircuit, LucidePalette, LucideDatabase, LucideComponent };
+    const IconComponent = icons[avatarName] || LucideBrainCircuit;
+    return <IconComponent size={36} />;
+};
 
-// This function needs to be defined before it's used by `createBotFromTemplate`.
-const calculateBotStats = (parts) => {
-    const stats = { weight: 0, cost: 0, power: 0, armor: 0, speed: 0, damage: 0, maxHealth: 0, parts: parts.length };
-    if (!parts || parts.length === 0) return stats;
+const useGenieStore = create((set, get) => ({
+    // Core State
+    status: 'AWAITING_KEY', logs: [], currentTask: 'Idle',
 
-    let baseHealth = 100; // All bots start with a base health
-    let chassisHealth = 0;
+    // User & Project Inputs
+    apiKey: '', prompt: '', userId: null, projects: [], currentProjectId: null,
 
-    parts.forEach(part => {
-        const def = ALL_PARTS[part.key];
-        if (def) {
-            stats.weight += def.weight || 0;
-            stats.cost += def.cost || 0;
-            stats.power += def.power || 0;
-            stats.armor += def.armor || 0;
-            stats.speed += def.speed || 0;
-            stats.damage += def.damage || 0;
-            if(def.categoryId === 'chassis') {
-                chassisHealth += def.health || 0;
+    // Perceived Intelligence State
+    agentIdentity: {
+        persona: 'Generalist',
+        confidence: 0,
+        avatar: getAvatarComponent('LucideBrainCircuit'),
+        description: PERSONAS_CONFIG.Generalist.description,
+        capabilities: PERSONAS_CONFIG.Generalist.capabilities
+    },
+    missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+
+    // Layered Intelligence State
+    refinement: { isActive: false, questions: [], answers: [] },
+    correction: { iteration: 0, maxIterations: 3 },
+    goalAnalysis: null,
+
+    // Multi-File Architecture State
+    projectFiles: {}, activeFile: 'index.html',
+
+    // UI State
+    logFilter: { system: true, agent: true, user: true, tool: true, success: true, error: true },
+    theme: 'theme-nebula',
+
+    // Generated Artifacts
+    plan: null, testResults: null, reflections: null,
+
+    // Firebase instances
+    db: null, auth: null, isAuthReady: false,
+
+    // Manual Refinements
+    manualRefinements: "", // Stores user's manual input
+    isManualRefinementActive: false, // Toggles the input field visibility
+
+    // Step Suggestions
+    stepSuggestions: {}, // E.g., { "projStepId_0_filename.js": "Suggestion text" }
+    suggestionModal: { isOpen: false, stepIndex: null, file: null, description: "", existingSuggestion: "" },
+
+    // Log Search
+    logSearchTerm: "",
+
+    // --- ACTIONS ---
+    initializeFirebase: (db, auth) => set({ db, auth }),
+    setManualRefinements: (refinements) => set({ manualRefinements: refinements }),
+    toggleManualRefinementActive: () => set(state => ({ isManualRefinementActive: !state.isManualRefinementActive })),
+    setLogSearchTerm: (term) => set({ logSearchTerm: term }),
+    openSuggestionModal: (step, stepIndex) => {
+        const key = `${get().currentProjectId}_${stepIndex}_${step.file}`;
+        set({
+            suggestionModal: {
+                isOpen: true,
+                stepIndex,
+                file: step.file,
+                description: step.description,
+                existingSuggestion: get().stepSuggestions[key] || ""
             }
+        });
+    },
+    closeSuggestionModal: () => set(state => ({ suggestionModal: { ...state.suggestionModal, isOpen: false } })),
+    saveStepSuggestion: (stepIndex, file, suggestion) => {
+        const key = `${get().currentProjectId}_${stepIndex}_${file}`;
+        set(state => ({
+            stepSuggestions: { ...state.stepSuggestions, [key]: suggestion },
+        }));
+        get().closeSuggestionModal();
+        get().addLog(`Suggestion saved for step in ${file}: "${suggestion}"`, 'user');
+        // TODO: Persist stepSuggestions to Firestore if needed. (Handled in runPlanningPhase)
+    },
+    setViewCodeForStep: (fileName) => {
+        set({ activeFile: fileName });
+        // Workspace component will observe activeFile and switch to 'forge' tab.
+    },
+    setAuthReady: (isAuthReady, userId) => set({ isAuthReady, userId, status: userId ? (get().apiKey ? 'IDLE' : 'AWAITING_KEY') : 'AWAITING_AUTH' }),
+    setApiKey: (apiKey) => {
+        set({ apiKey });
+        if (apiKey && get().status === 'AWAITING_KEY' && get().isAuthReady) {
+            set({ status: 'IDLE', currentTask: 'Ready. Provide a new project goal.' });
+        } else { set({ status: 'AWAITING_KEY', currentTask: 'Awaiting API Key.' }); }
+    },
+    loadProjects: (projects) => set({ projects }),
+    setCurrentProject: (projectId) => {
+        const project = get().projects.find(p => p.id === projectId);
+        if (project) {
+            const projectPersonaName = project.agentIdentity?.persona || 'Generalist';
+            const config = PERSONAS_CONFIG[projectPersonaName] || PERSONAS_CONFIG['Generalist'];
+
+            const loadedIdentity = {
+                persona: projectPersonaName,
+                confidence: project.agentIdentity?.confidence || 0,
+                description: project.agentIdentity?.description || config.description,
+                capabilities: project.agentIdentity?.capabilities || config.capabilities,
+                avatar: getAvatarComponent(config.avatarName)
+            };
+
+            set({
+                currentProjectId: projectId, prompt: project.prompt, plan: project.plan,
+                projectFiles: project.projectFiles || {}, activeFile: Object.keys(project.projectFiles || {})[0] || 'index.html',
+                testResults: project.testResults, reflections: project.reflections,
+                agentIdentity: loadedIdentity,
+                missionControl: project.missionControl || { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+                goalAnalysis: project.goalAnalysis || null,
+                logs: project.logs || [], refinement: { isActive: false, questions: [], answers: [] },
+                status: project.status || 'IDLE', currentTask: 'Project loaded. Ready for instructions.',
+                manualRefinements: project.manualRefinements || "",
+                isManualRefinementActive: project.isManualRefinementActive || false,
+                stepSuggestions: project.stepSuggestions || {},
+            });
         }
-    });
-    stats.maxHealth = baseHealth + chassisHealth;
-    return stats;
-};
+    },
+    clearCurrentProject: () => set({
+        currentProjectId: null, prompt: '', plan: null, projectFiles: {}, activeFile: 'index.html',
+        testResults: null, reflections: null, logs: [],
+        refinement: { isActive: false, questions: [], answers: [] },
+        goalAnalysis: null, status: 'IDLE', currentTask: 'Ready. Provide a new project goal.',
+        manualRefinements: "",
+        isManualRefinementActive: false,
+        stepSuggestions: {},
+        logSearchTerm: "",
+        agentIdentity: {
+            persona: 'Generalist',
+            confidence: 0,
+            avatar: getAvatarComponent(PERSONAS_CONFIG.Generalist.avatarName),
+            description: PERSONAS_CONFIG.Generalist.description,
+            capabilities: PERSONAS_CONFIG.Generalist.capabilities
+        },
+        missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+    }),
+    startProject: async (prompt) => {
+        if (!prompt || !get().apiKey) { return; }
+        const newProjectId = `proj_${Date.now()}`;
+        get().clearCurrentProject(); // This will set the default Generalist identity
 
-// --- PRE-BUILT BOT DEFINITIONS ---
-const createBotFromTemplate = (name, chassisKey, weaponKey, mobilityKey) => {
-    const chassisDef = ALL_PARTS[chassisKey];
-    if (!chassisDef) return null;
+        const currentAgentIdentity = get().agentIdentity; // Get the default identity set by clearCurrentProject
 
-    const parts = [
-        { key: chassisKey, instanceId: `${name}_chassis`, pos: new THREE.Vector3(0, chassisDef.geometry.size[1] / 2, 0), quat: new THREE.Quaternion(), attachmentIndex: -1 },
-        { key: weaponKey, instanceId: `${name}_weapon`, pos: new THREE.Vector3(0, chassisDef.geometry.size[1] / 2, 0).add(new THREE.Vector3().fromArray(chassisDef.attachmentPoints[0].pos)), quat: new THREE.Quaternion(), attachmentIndex: 0 },
-        { key: mobilityKey, instanceId: `${name}_mobility`, pos: new THREE.Vector3(0, chassisDef.geometry.size[1] / 2, 0).add(new THREE.Vector3(0, 0, -1)), quat: new THREE.Quaternion(), attachmentIndex: -1 }, // Simplified position for mobility
-    ];
+        set({ // Set other project-specific states
+            prompt, currentProjectId: newProjectId, status: 'REFINING',
+            currentTask: 'Assessing Goal & Adopting Persona...', logs: [],
+            correction: { iteration: 0, maxIterations: 3 },
+        });
+        get().addLog(`New project started. ID: ${newProjectId}`, 'system');
+        get().addLog(`Initial Goal: ${prompt}`, 'user');
+        const { db, userId } = get();
+        if (db && userId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, newProjectId);
+            try {
+                // Save initial project data including the default agent identity (without avatar component)
+                const { avatar, ...identityToSave } = currentAgentIdentity; // Exclude avatar React component
+                await setDoc(projectRef, {
+                    id: newProjectId,
+                    prompt,
+                    createdAt: new Date().toISOString(),
+                    status: 'REFINING',
+                    logs: get().logs,
+                    agentIdentity: identityToSave, // Save description, capabilities, persona, confidence
+                    manualRefinements: get().manualRefinements,
+                    isManualRefinementActive: get().isManualRefinementActive,
+                    stepSuggestions: {},
+                    missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+                    projectFiles: {},
+                    goalAnalysis: null,
+                    plan: null,
+                    testResults: null,
+                    reflections: null
+                });
+            } catch (error) { set({ status: 'ERROR', currentTask: 'Error saving project.' }); }
+        }
+    },
+    addLog: (message, type = 'agent', data = null) => {
+      const persona = get().agentIdentity.persona;
+      const finalMessage = type === 'agent' ? `[${persona}]: ${message}` : message;
+      const newLog = { message: finalMessage, type, data, timestamp: new Date().toISOString() };
+      set(state => ({ logs: [...state.logs, newLog] }));
+      get().updateFirestoreLog();
+    },
+    updateFirestoreLog: () => {
+        const { db, userId, currentProjectId, logs } = get();
+        if (db && userId && currentProjectId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+            updateDoc(projectRef, { logs }).catch(err => console.error("Failed to update logs in Firestore:", err));
+        }
+    },
+    setAgentIdentity: (identity) => { // identity is { persona, confidence }
+        const personaName = identity.persona || 'Generalist'; // Ensure personaName is always valid
+        const config = PERSONAS_CONFIG[personaName] || PERSONAS_CONFIG['Generalist'];
+        const newIdentity = {
+            persona: personaName,
+            confidence: identity.confidence,
+            avatar: getAvatarComponent(config.avatarName),
+            description: config.description,
+            capabilities: config.capabilities
+        };
+        set({ agentIdentity: newIdentity });
+        get().addLog(`Persona adopted: ${newIdentity.persona}. Confidence: ${identity.confidence}%.`, 'system');
+    },
+    setRefinementQuestions: (questions) => {
+        if (questions?.length > 0) {
+            set({ refinement: { isActive: true, questions, answers: [] }, currentTask: 'Awaiting user input for clarification.' });
+        } else {
+            set({ refinement: { isActive: false, questions: [], answers: [] }, status: 'ANALYZING', currentTask: 'Analyzing refined goal...' });
+            get().addLog('Prompt is clear. Commencing deep goal analysis.', 'success');
+        }
+    },
+    submitRefinementAnswer: (answer) => {
+        set(state => {
+            const newAnswers = [...state.refinement.answers, answer];
+            const isDone = newAnswers.length === state.refinement.questions.length;
+            if (isDone) {
+                get().addLog('All clarifications received. Proceeding to analysis.', 'user');
+                return {
+                    refinement: { ...state.refinement, answers: newAnswers, isActive: false },
+                    status: 'ANALYZING', currentTask: 'Analyzing refined goal...'
+                };
+            }
+            return { refinement: { ...state.refinement, answers: newAnswers } };
+        });
+    },
+    setGoalAnalysis: (analysis) => {
+        set({ goalAnalysis: analysis, status: 'PLANNING', currentTask: 'Architecting Solution & Building Mission Plan...'});
+        get().addLog('Goal analysis complete. Proceeding to architectural planning.', 'success');
+    },
+    setMissionPlan: (plan) => {
+        const totalWorkUnits = plan.steps.reduce((acc, step) => acc + (step.time_estimate || 5), 0);
+        set({
+            plan,
+            missionControl: { steps: plan.steps.map(s => ({ ...s, status: 'pending', logIndex: -1 })), totalWorkUnits, completedWorkUnits: 0, currentStepIndex: -1 },
+            projectFiles: plan.files.reduce((acc, file) => ({...acc, [file]: ''}), {}),
+            activeFile: plan.files[0] || 'index.html',
+            status: 'CODING', currentTask: 'Executing Mission Plan...'
+        });
+        get().addLog('Mission plan locked in. Commencing code generation.', 'success');
+    },
+    updateMissionProgress: (stepIndex) => {
+        set(state => {
+            const newSteps = [...state.missionControl.steps];
+            let completedWorkUnits = state.missionControl.completedWorkUnits;
 
-    return {
-        id: `template_${name.replace(/\s+/g, '_')}`,
-        name,
-        parts,
-        stats: calculateBotStats(parts)
-    };
-};
+            if(state.missionControl.currentStepIndex >= 0 && state.missionControl.currentStepIndex < newSteps.length) {
+                 newSteps[state.missionControl.currentStepIndex].status = 'complete';
+                 completedWorkUnits += newSteps[state.missionControl.currentStepIndex].time_estimate;
+            }
+            if (stepIndex < newSteps.length) {
+                newSteps[stepIndex].status = 'in-progress';
+                newSteps[stepIndex].logIndex = get().logs.length; // Point to the *next* log entry
+            }
 
-const PREBUILT_BOTS = {
-    lancer: createBotFromTemplate('The Lancer', 'chassis_wedge', 'weapon_flipper', 'mobility_wheels'),
-    mauler: createBotFromTemplate('The Mauler', 'chassis_heavy', 'weapon_hammer', 'mobility_treads'),
-    spinner: createBotFromTemplate('The Spinner', 'chassis_medium', 'weapon_saw', 'mobility_wheels'),
-};
+            return { missionControl: { ...state.missionControl, steps: newSteps, completedWorkUnits, currentStepIndex: stepIndex } };
+        });
+    },
+    setTestResults: (results) => set(state => {
+      if (results.issues?.length > 0) {
+          get().addLog(`Found ${results.issues.length} issues. Entering self-correction loop.`, 'system');
+          return { testResults: results, status: 'CORRECTING', currentTask: `Correcting code (Attempt ${state.correction.iteration + 1})` };
+      }
+      get().addLog('No issues found. Code passed audit.', 'success');
+      return { testResults: results, status: 'REFACTORING', currentTask: 'Finalizing & Documenting...' };
+    }),
+    setActiveFile: (fileName) => set({ activeFile: fileName }),
+    updateFileContent: (fileName, newContent, isAppending = false) => {
+        set(state => ({
+            projectFiles: { ...state.projectFiles, [fileName]: isAppending ? (state.projectFiles[fileName] || '') + newContent : newContent }
+        }));
+    },
+    completeCoding: () => set(state => {
+      get().addLog('Code generation complete for all files.', 'success');
+      get().updateMissionProgress(state.missionControl.steps.length);
+      return { status: 'TESTING', currentTask: 'Auditing & Testing Code...' };
+    }),
+    setCodeAndIterate: (newFiles) => set(state => {
+        get().addLog(`Applying corrections. Re-running tests.`, 'agent');
+        return {
+            projectFiles: newFiles, status: 'TESTING',
+            currentTask: `Re-testing code after corrections (Attempt ${state.correction.iteration + 1})`,
+            correction: { ...state.correction, iteration: state.correction.iteration + 1 }
+        };
+    }),
+    setReflections: (reflections) => set(state => {
+      get().addLog('Self-reflection complete.', 'success');
+      return { reflections, status: 'COMPLETED', currentTask: 'Mission Complete.' };
+    }),
+    updateStatus: (status, currentTask) => set({ status, currentTask }),
+    toggleLogFilter: (filterKey) => set(state => ({
+        logFilter: { ...state.logFilter, [filterKey]: !state.logFilter[filterKey] }
+    })),
+    setTheme: (theme) => set({ theme }),
+}));
 
-// --- CORE SYSTEMS & STATE MANAGEMENT ---
-const useGame = () => {
-    const [gameState, setGameState] = useState({
-        currentBot: null, // { id, name, parts, stats }
-        savedBots: [],
-        currentView: 'main_menu',
-        isLoading: true,
-        modal: { isOpen: false, title: '', content: null }
-    });
+// --- ERROR BOUNDARY COMPONENT ---
+class ErrorBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+    static getDerivedStateFromError(error) { return { hasError: true, error }; }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="p-4 m-4 bg-red-500/10 border border-red-500 rounded-lg text-red-300">
+                    <h3 className="font-bold">Component Error</h3>
+                    <p>A critical error occurred in this part of the UI.</p>
+                    <pre className="text-xs whitespace-pre-wrap mt-2">{this.state.error?.message}</pre>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
-    const [firebase, setFirebase] = useState(null);
+// --- REACT COMPONENTS (v2.7.1 - FULLY RESTORED AND FUNCTIONAL) ---
+
+const App = () => {
+    const theme = useGenieStore(state => state.theme);
+    const status = useGenieStore(state => state.status);
 
     useEffect(() => {
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'dev-app';
-        
-        setFirebase({ app, auth, db, appId });
-
-        // Sign in and fetch initial data
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setGameState(prev => ({ ...prev, userId: user.uid }));
-                await fetchBots(db, user.uid, appId);
-            } else {
-                await signInAnonymously(auth);
-            }
-             setGameState(prev => ({ ...prev, isLoading: false }));
-        });
+        const { initializeFirebase, setAuthReady } = useGenieStore.getState();
+        try {
+            const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+            if (!firebaseConfig.apiKey) { useGenieStore.setState({ status: 'ERROR', currentTask: 'Firebase configuration is missing.' }); return; }
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            initializeFirebase(db, auth);
+            onAuthStateChanged(auth, async (user) => {
+                if (user) { setAuthReady(true, user.uid); }
+                else {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else { await signInAnonymously(auth); }
+                    } catch (error) { setAuthReady(false, null); }
+                }
+            });
+        } catch (error) { useGenieStore.setState({ status: 'ERROR', currentTask: `Firebase Init Failed: ${error.message}` }); }
     }, []);
 
-    const fetchBots = async (db, userId, appId) => {
-        if (!db || !userId) return;
-        setGameState(prev => ({ ...prev, isLoading: true }));
-        const botsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/bots`);
-        const q = query(botsCollectionRef);
-        const querySnapshot = await getDocs(q);
-        const bots = querySnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                ...data,
-                parts: data.parts.map(p => ({
-                    ...p,
-                    // Deserialize arrays back into THREE.js objects
-                    pos: new THREE.Vector3().fromArray(p.pos),
-                    quat: new THREE.Quaternion().fromArray(p.quat),
-                }))
-            };
-        });
-        setGameState(prev => ({ ...prev, savedBots: bots, isLoading: false }));
+    useAgentOrchestrator();
+
+    const statusGradients = {
+        'theme-nebula': { default: 'from-gray-900 to-black', active: 'from-purple-900 via-gray-900 to-gray-900', test: 'from-indigo-900 via-gray-900 to-gray-900', success: 'from-green-900 via-gray-900 to-gray-900', error: 'from-red-900 via-gray-900 to-gray-900' },
+        'theme-solar': { default: 'from-gray-900 to-black', active: 'from-orange-900 via-gray-900 to-gray-900', test: 'from-yellow-900 via-gray-900 to-gray-900', success: 'from-lime-900 via-gray-900 to-gray-900', error: 'from-red-900 via-gray-900 to-gray-900' },
+        'theme-starship': { default: 'from-gray-800 to-slate-900', active: 'from-cyan-900 via-slate-900 to-slate-900', test: 'from-blue-900 via-slate-900 to-slate-900', success: 'from-teal-900 via-slate-900 to-slate-900', error: 'from-rose-900 via-slate-900 to-slate-900' },
     };
-
-    const saveCurrentBot = async (botName) => {
-        if (!firebase || !gameState.userId || !gameState.currentBot) return;
-        setGameState(prev => ({ ...prev, isLoading: true }));
-
-        const botToSave = {
-            ...gameState.currentBot,
-            name: botName,
-            // Serialize THREE.js objects to arrays for Firestore
-            parts: gameState.currentBot.parts.map(p => ({
-                ...p,
-                pos: p.pos.toArray ? p.pos.toArray() : p.pos,
-                quat: p.quat.toArray ? p.quat.toArray() : p.quat,
-            })),
-            stats: calculateBotStats(gameState.currentBot.parts)
-        };
-        const docRef = doc(firebase.db, `artifacts/${firebase.appId}/users/${gameState.userId}/bots`, botToSave.id);
-
-        try {
-            await setDoc(docRef, botToSave, { merge: true });
-            await fetchBots(firebase.db, gameState.userId, firebase.appId);
-            setGameState(prev => ({ ...prev, isLoading: false, modal: { isOpen: false } }));
-        } catch (error) {
-            console.error("Error saving bot: ", error);
-             setGameState(prev => ({ ...prev, isLoading: false, modal: { isOpen: true, title: 'Error', content: 'Could not save your bot.' } }));
-        }
-    };
-    
-     const deleteBot = async (botId) => {
-        if (!firebase || !gameState.userId || !botId) return;
-        if (!window.confirm("Are you sure you want to delete this bot forever?")) return;
-
-        setGameState(prev => ({ ...prev, isLoading: true }));
-        const docRef = doc(firebase.db, `artifacts/${firebase.appId}/users/${gameState.userId}/bots`, botId);
-
-        try {
-            await deleteDoc(docRef);
-            await fetchBots(firebase.db, gameState.userId, firebase.appId);
-             if(gameState.currentBot?.id === botId) {
-                setGameState(prev => ({ ...prev, currentBot: null }));
-            }
-            setGameState(prev => ({ ...prev, isLoading: false, modal: { isOpen: false } }));
-        } catch (error) {
-            console.error("Error deleting bot: ", error);
-            setGameState(prev => ({ ...prev, isLoading: false, modal: { isOpen: true, title: 'Error', content: 'Could not delete your bot.' } }));
+    const getStatusBackground = () => {
+        const themeGradients = statusGradients[theme] || statusGradients['theme-nebula'];
+        switch (status) {
+            case 'PLANNING': case 'CODING': case 'CORRECTING': case 'REFINING': case 'ANALYZING': return themeGradients.active;
+            case 'TESTING': return themeGradients.test;
+            case 'COMPLETED': return themeGradients.success;
+            case 'ERROR': return themeGradients.error;
+            default: return themeGradients.default;
         }
     };
 
-    const createNewBot = () => {
-        const newBot = {
-            id: `bot_${Date.now()}`,
-            name: "New Bot",
-            parts: [],
-            stats: calculateBotStats([])
-        };
-        setGameState(prev => ({ ...prev, currentBot: newBot, currentView: 'bot_builder' }));
-    };
-
-    const loadBot = (botId) => {
-        const botToLoad = gameState.savedBots.find(b => b.id === botId);
-        if(botToLoad) {
-            setGameState(prev => ({...prev, currentBot: botToLoad, currentView: 'bot_builder'}));
-        }
-    };
-
-    const startQuickBattle = (botTemplate) => {
-        setGameState(prev => ({...prev, currentBot: botTemplate, currentView: 'arena'}));
-    };
-    
-    const updateCurrentBot = (newParts) => {
-         setGameState(prev => {
-            if (!prev.currentBot) return prev;
-            const updatedBot = {
-                ...prev.currentBot,
-                parts: newParts,
-                stats: calculateBotStats(newParts)
-            };
-            return { ...prev, currentBot: updatedBot };
-        });
-    }
-
-    const setView = (view) => setGameState(prev => ({ ...prev, currentView: view }));
-    
-    const showModal = (title, content) => setGameState(prev => ({ ...prev, modal: { isOpen: true, title, content } }));
-    const hideModal = () => setGameState(prev => ({ ...prev, modal: { ...prev.modal, isOpen: false } }));
-
-    return { gameState, firebase, setView, createNewBot, loadBot, updateCurrentBot, saveCurrentBot, deleteBot, startQuickBattle, showModal, hideModal };
+    return (
+        <div className={`bg-gradient-to-br ${getStatusBackground()} text-gray-100 font-sans h-screen flex flex-col antialiased transition-all duration-1000 ${theme}`}>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+            <ErrorBoundary><Header /></ErrorBoundary>
+            <div className="flex-grow flex flex-col p-4 gap-4 overflow-hidden">
+                <ErrorBoundary><MissionControl /></ErrorBoundary>
+                <main className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-hidden">
+                    <div className="lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
+                       <ErrorBoundary><ControlPanel /></ErrorBoundary>
+                       <ErrorBoundary><ProjectManager /></ErrorBoundary>
+                       <ErrorBoundary><ProjectHealthPanel /></ErrorBoundary>
+                    </div>
+                    <div className="lg:col-span-5 flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10">
+                        <ErrorBoundary><Workspace /></ErrorBoundary>
+                    </div>
+                    <div className="lg:col-span-4 flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10">
+                        <ErrorBoundary><IntegratedPreviewPanel /></ErrorBoundary>
+                    </div>
+                    <RefinementModal />
+                    <SuggestionModal /> {/* Add new modal */}
+                </main>
+            </div>
+            <ErrorBoundary><StatusBar /></ErrorBoundary>
+            <style>{`
+                .theme-nebula { --primary: 168, 85, 247; }
+                .theme-solar { --primary: 249, 115, 22; }
+                .theme-starship { --primary: 34, 211, 238; }
+                .border-primary { border-color: rgb(var(--primary)); }
+                .text-primary { color: rgb(var(--primary)); }
+                .bg-primary { background-color: rgb(var(--primary)); }
+                .bg-primary-20 { background-color: rgba(var(--primary), 0.2); }
+                .ring-primary:focus { ring-color: rgb(var(--primary)); }
+                .animate-pulse-once { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 1; }
+            `}</style>
+        </div>
+    );
 };
 
-// --- UI COMPONENTS ---
+const ProjectDetailsPanel = () => {
+    const {
+        prompt,
+        manualRefinements,
+        isManualRefinementActive,
+        refinement,
+        goalAnalysis,
+        plan
+    } = useGenieStore();
 
-const Modal = ({ modal, onConfirm, onCancel }) => {
-    if (!modal.isOpen) return null;
+    if (useGenieStore(s => s.status) === 'IDLE' || useGenieStore(s => s.status).includes('AWAITING')) {
+        return <div className="flex items-center justify-center h-full text-gray-500 p-4">No project active or details available yet.</div>;
+    }
+
+    let fullInitialPrompt = prompt;
+    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
+        fullInitialPrompt += `
+
+User's Additional Guidance:
+${manualRefinements}`;
+    }
+
     return (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="bg-gray-900 border-2 border-cyan-400/50 rounded-2xl p-8 max-w-lg w-full shadow-2xl shadow-cyan-500/20">
-                <h2 className="text-2xl font-bold text-white mb-4" style={{ fontFamily: "'Orbitron', sans-serif" }}>{modal.title}</h2>
-                <div className="text-gray-300">{modal.content}</div>
-                <div className="flex justify-end gap-4 mt-6">
-                    {onCancel && <button onClick={onCancel} className="menu-button bg-gray-600">Cancel</button>}
-                    {onConfirm && <button onClick={onConfirm} className="menu-button bg-cyan-500">Confirm</button>}
+        <div className="p-4 overflow-y-auto h-full prose prose-invert prose-sm max-w-none">
+            <h3>Project Configuration & Agent Insights</h3>
+
+            <details className="mb-4 p-2 bg-black/20 rounded-md" open>
+                <summary className="font-bold cursor-pointer hover:text-primary">Full Initial Prompt</summary>
+                <pre className="mt-2 whitespace-pre-wrap text-xs">{fullInitialPrompt || 'Not set.'}</pre>
+            </details>
+
+            {refinement && (refinement.questions?.length > 0 || refinement.answers?.length > 0) && (
+                <details className="mb-4 p-2 bg-black/20 rounded-md" open>
+                    <summary className="font-bold cursor-pointer hover:text-primary">Refinement Q&A</summary>
+                    {refinement.questions.map((q, i) => (
+                        <div key={i} className="mt-2">
+                            <p className="font-semibold text-gray-400">Q: {q}</p>
+                            <p className="text-xs ml-4">A: {refinement.answers[i] || '(No answer yet)'}</p>
+                        </div>
+                    ))}
+                </details>
+            )}
+
+            {goalAnalysis && (
+                <details className="mb-4 p-2 bg-black/20 rounded-md">
+                    <summary className="font-bold cursor-pointer hover:text-primary">Goal Analysis Output</summary>
+                    <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(goalAnalysis, null, 2) || 'Not available.'}</pre>
+                </details>
+            )}
+
+            {plan && (
+                <details className="mb-4 p-2 bg-black/20 rounded-md">
+                    <summary className="font-bold cursor-pointer hover:text-primary">Mission Plan Output</summary>
+                    <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(plan, null, 2) || 'Not available.'}</pre>
+                </details>
+            )}
+
+            {!fullInitialPrompt && !goalAnalysis && !plan && (!refinement || refinement.questions?.length === 0) && (
+                 <p className="text-gray-500">No detailed configuration insights to display for the current project state.</p>
+            )}
+        </div>
+    );
+};
+
+const SuggestionModal = () => {
+    const { suggestionModal, closeSuggestionModal, saveStepSuggestion } = useGenieStore();
+    const [suggestionText, setSuggestionText] = useState("");
+
+    useEffect(() => {
+        if (suggestionModal.isOpen) {
+            setSuggestionText(suggestionModal.existingSuggestion);
+        }
+    }, [suggestionModal.isOpen, suggestionModal.existingSuggestion]);
+
+    if (!suggestionModal.isOpen) return null;
+
+    const handleSubmit = () => {
+        saveStepSuggestion(suggestionModal.stepIndex, suggestionModal.file, suggestionText);
+    };
+
+    return (
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-lg flex flex-col gap-4 border border-white/10">
+                <h2 className="text-xl font-bold flex items-center gap-2"><LucideLightbulb className="text-yellow-400"/>Suggest an Edit</h2>
+                <p className="text-sm text-gray-400">For step: <span className="font-medium text-gray-300 truncate" title={suggestionModal.description}>{suggestionModal.description}</span></p>
+                <p className="text-sm text-gray-400">File: <span className="font-medium text-gray-300">{suggestionModal.file}</span></p>
+                <textarea
+                    placeholder="E.g., 'Consider using a different algorithm here for performance.' or 'Ensure this component is accessible.'"
+                    value={suggestionText}
+                    onChange={(e) => setSuggestionText(e.target.value)}
+                    className="bg-gray-900/70 border border-gray-600 rounded-md p-2 text-sm w-full resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
+                    rows={5}
+                />
+                <div className="flex justify-end gap-3 mt-2">
+                    <button onClick={closeSuggestionModal} className="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-4 rounded-md transition-colors">Cancel</button>
+                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-4 rounded-md transition-colors">Save Suggestion</button>
                 </div>
             </div>
         </div>
     );
 };
 
-const SaveBotModal = ({ bot, onSave, onCancel }) => (
-     <div className="space-y-4">
-        <p>Enter a name for your bot.</p>
-        <input 
-            type="text" 
-            defaultValue={bot.name}
-            id="botNameInput"
-            className="w-full p-2 bg-gray-800 border border-gray-600 rounded-md text-white"
-        />
-        <div className="flex justify-end gap-4 mt-6">
-            <button onClick={onCancel} className="menu-button bg-gray-600">Cancel</button>
-            <button 
-                onClick={() => {
-                    const name = document.getElementById('botNameInput').value;
-                    if(name) onSave(name);
-                }} 
-                className="menu-button bg-cyan-500"
-            >
-                Save
-            </button>
-        </div>
-    </div>
-);
-
-
-const MainMenu = ({ onStartBuilder, onOpenGarage, onQuickBattle }) => (
-    <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-md text-center bg-black/80 backdrop-blur-md p-8 md:p-12 rounded-2xl border-2 border-cyan-400/50 shadow-2xl shadow-cyan-500/20">
-            <h1 className="text-5xl md:text-6xl font-bold mb-2 uppercase" style={{ fontFamily: "'Orbitron', sans-serif" }}>
-                <span className="bg-gradient-to-r from-cyan-400 to-purple-500 text-transparent bg-clip-text">Battle Bots</span>
-                <span className="text-white"> 3D</span>
-            </h1>
-            <p className="text-lg text-gray-400 mb-10 font-light">ULTIMATE COMBAT ARENA</p>
-            <div className="space-y-4">
-                 <button onClick={onQuickBattle} className="w-full menu-button bg-gradient-to-r from-orange-500 to-red-500">
-                    <ChevronsRight className="inline-block mr-2" /> Quick Battle
-                </button>
-                <button onClick={onStartBuilder} className="w-full menu-button bg-gradient-to-r from-cyan-500 to-blue-500">
-                    <Wrench className="inline-block mr-2" /> Bot Builder
-                </button>
-                <button onClick={onOpenGarage} className="w-full menu-button bg-gradient-to-r from-purple-500 to-pink-500">
-                    <Bot className="inline-block mr-2" /> Garage
-                </button>
-            </div>
-        </div>
-    </div>
-);
-
-const QuickBattleSelect = ({ onSelect, onBack }) => {
+const Header = () => {
+    const { theme, setTheme, status } = useGenieStore();
     return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
-            <div className="text-center mb-8">
-                 <h1 className="text-5xl font-bold uppercase" style={{ fontFamily: "'Orbitron', sans-serif" }}>
-                    <span className="bg-gradient-to-r from-orange-400 to-red-500 text-transparent bg-clip-text">Choose Your Bot</span>
-                 </h1>
-                 <p className="text-lg text-gray-400">Select a pre-built bot to jump straight into the fight.</p>
+        <header className="flex-shrink-0 flex items-center justify-between p-3 border-b border-white/10 bg-black/20 backdrop-blur-sm shadow-lg">
+            <div className="flex items-center gap-3">
+                <LucideBrainCircuit className="text-primary w-8 h-8" />
+                <div>
+                    <h1 className="text-xl font-bold text-white">Genie v2.7.1</h1>
+                    <p className="text-xs text-gray-400">Stabilized Core Engine</p>
+                </div>
             </div>
-            <div className="grid md:grid-cols-3 gap-8 w-full max-w-6xl">
-                {Object.values(PREBUILT_BOTS).map(bot => (
-                    <div key={bot.id} className="bg-black/80 backdrop-blur-md p-6 rounded-2xl border-2 border-orange-400/30 hover:border-orange-400/80 transition-all duration-300 flex flex-col">
-                        <BotStats bot={bot} />
-                        <div className="flex-grow mt-4 text-center">
-                             <p className="text-gray-400">{ALL_PARTS[bot.parts.find(p => p.key.startsWith('weapon')).key].description}</p>
-                        </div>
-                        <button onClick={() => onSelect(bot)} className="w-full mt-6 menu-button bg-gradient-to-r from-orange-500 to-red-500">
-                            Select {bot.name}
-                        </button>
-                    </div>
-                ))}
+            <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                    <Tooltip text="Nebula Theme"><button onClick={() => setTheme('theme-nebula')} className={`p-2 rounded-full ${theme === 'theme-nebula' ? 'bg-purple-500/50' : ''}`}><LucideWand2 size={16} className="text-purple-400"/></button></Tooltip>
+                    <Tooltip text="Solar Flare Theme"><button onClick={() => setTheme('theme-solar')} className={`p-2 rounded-full ${theme === 'theme-solar' ? 'bg-orange-500/50' : ''}`}><LucideSun size={16} className="text-orange-400"/></button></Tooltip>
+                    <Tooltip text="Starship Theme"><button onClick={() => setTheme('theme-starship')} className={`p-2 rounded-full ${theme === 'theme-starship' ? 'bg-cyan-500/50' : ''}`}><LucideMoon size={16} className="text-cyan-400"/></button></Tooltip>
+                </div>
+                {status === 'COMPLETED' && <DownloadProjectButton />}
             </div>
-            <button onClick={onBack} className="mt-12 menu-button bg-gray-700/80"><ArrowLeft className="inline-block mr-2"/>Back to Main Menu</button>
+        </header>
+    )
+};
+
+const DownloadProjectButton = () => {
+    const { projectFiles, prompt } = useGenieStore();
+    const handleDownload = () => {
+        const zip = new window.JSZip();
+        Object.entries(projectFiles).forEach(([fileName, content]) => {
+            zip.file(fileName, content);
+        });
+        zip.generateAsync({ type: "blob" }).then(content => {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            const safeName = prompt.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 20);
+            link.download = `${safeName || 'genie-project'}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    };
+    return (
+        <button onClick={handleDownload} className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-300 font-bold py-2 px-4 rounded-lg transition-colors">
+            <LucideDownload size={16} />
+            Download Project
+        </button>
+    );
+};
+
+const Workspace = () => {
+    const [activeTab, setActiveTab] = useState('logs');
+    const { status, activeFile, projectFiles } = useGenieStore(state => ({
+        status: state.status,
+        activeFile: state.activeFile,
+        projectFiles: state.projectFiles
+    }));
+    const showGoalAnalysis = status !== 'IDLE' && status !== 'AWAITING_KEY' && status !== 'AWAITING_AUTH';
+
+    useEffect(() => {
+        if (activeFile && projectFiles.hasOwnProperty(activeFile) && activeTab !== 'forge') {
+            setActiveTab('forge');
+        }
+    }, [activeFile, projectFiles, activeTab]);
+
+    const tabButtonStyle = (tabName) => {
+        const base = "whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ";
+        if (activeTab === tabName) { return base + "border-primary text-primary"; }
+        return base + "border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500";
+    };
+
+    return (
+        <div className="flex flex-col h-full">
+            <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
+                <nav className="-mb-px flex space-x-2" aria-label="Tabs">
+                    <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')}><LucideTerminal size={16} /> Agent Logs</button>
+                    {showGoalAnalysis && ( <button onClick={() => setActiveTab('analysis')} className={tabButtonStyle('analysis')}><LucideLightbulb size={16} /> Goal Analysis</button> )}
+                    <button onClick={() => setActiveTab('forge')} className={tabButtonStyle('forge')}><LucideFileCode size={16} /> Code Forge</button>
+                    {/* New Tab Button - show if not in initial states */}
+                    {(status !== 'IDLE' && !status.includes('AWAITING')) &&
+                        <button onClick={() => setActiveTab('details')} className={tabButtonStyle('details')}><LucideWrench size={16} /> Project Details</button>
+                    }
+                </nav>
+            </div>
+            {activeTab === 'logs' && <LogsPanel />}
+            {activeTab === 'analysis' && <GoalAnalysisPanel />}
+            {activeTab === 'forge' && <CodeForge />}
+            {activeTab === 'details' && <ProjectDetailsPanel />} {/* Render new panel */}
         </div>
     );
 };
 
-const GarageView = ({ bots, onLoad, onCreate, onDelete, onBack }) => (
-    <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl text-white bg-black/80 backdrop-blur-md p-8 rounded-2xl border-2 border-purple-400/50 shadow-2xl shadow-purple-500/20">
-            <div className="flex justify-between items-center border-b-2 border-purple-400/50 pb-4 mb-4">
-                 <button onClick={onBack} className="p-2 rounded-full hover:bg-white/10 transition"><ArrowLeft size={24}/></button>
-                 <h1 className="text-4xl font-bold uppercase" style={{ fontFamily: "'Orbitron', sans-serif" }}>Garage</h1>
-                 <div className="w-10"></div>
+// GoalAnalysisPanel remains the same, ProjectDetailsPanel was added before it. The search pattern should target the end of Workspace.
+
+
+const Tooltip = ({ text, children }) => (
+    <div className="relative group flex items-center">
+        {children}
+        <div className="absolute bottom-full mb-2 w-max max-w-xs bg-black text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-50 shadow-lg">
+            {text}
+        </div>
+    </div>
+);
+
+const AgentIdentity = () => {
+    const { persona, confidence, avatar, description } = useGenieStore(state => state.agentIdentity); // Add description
+    const circumference = 2 * Math.PI * 40;
+    const offset = circumference - (confidence / 100) * circumference;
+
+    return (
+        <div className="bg-gradient-to-br from-black/20 to-black/10 rounded-lg p-4 flex items-center gap-4 shadow-inner border border-white/10">
+            <Tooltip text={`The agent analyzes the prompt to adopt a persona best suited for the task. It then calculates a confidence score based on the clarity of the goal and its own capabilities.`}>
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                    <svg className="absolute w-full h-full transform -rotate-90">
+                        <circle cx="50%" cy="50%" r="40" strokeWidth="8" stroke="rgba(255,255,255,0.1)" fill="transparent" />
+                        <circle cx="50%" cy="50%" r="40" strokeWidth="8" stroke="url(#confidenceGradient)" fill="transparent"
+                            strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+                            className="transition-all duration-1000 ease-in-out" />
+                        <defs><linearGradient id="confidenceGradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stopColor="rgb(var(--primary))" /><stop offset="100%" stopColor="#6366f1" /></linearGradient></defs>
+                    </svg>
+                    <div className="text-primary">{avatar}</div> {/* Directly use avatar from store */}
+                </div>
+            </Tooltip>
+            <div>
+                <p className="text-sm text-gray-400">Active Persona</p>
+                <h3 className="text-xl font-bold text-white">{persona}</h3>
+                <p className="text-sm font-medium text-primary">Confidence: {confidence}%</p>
+                <p className="text-xs text-gray-500 mt-1 italic">{description || 'No description available.'}</p> {/* Display description */}
             </div>
-           
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
-                {bots.length > 0 ? bots.map(bot => (
-                    <div key={bot.id} className="flex items-center justify-between p-4 bg-white/5 rounded-lg hover:bg-white/10 transition">
-                        <div>
-                            <h3 className="text-xl font-bold">{bot.name}</h3>
-                            <p className="text-sm text-gray-400">Parts: {bot.parts.length}, Weight: {bot.stats.weight}</p>
+        </div>
+    );
+};
+
+const ControlPanel = () => {
+    const { apiKey, setApiKey, prompt, status, startProject, clearCurrentProject } = useGenieStore();
+    const [localPrompt, setLocalPrompt] = useState(prompt);
+
+    useEffect(() => { setLocalPrompt(prompt); }, [prompt]);
+    const handleStart = () => { if (localPrompt && apiKey) startProject(localPrompt); };
+    const isRunning = !['IDLE', 'COMPLETED', 'ERROR', 'AWAITING_KEY', 'AWAITING_AUTH'].includes(status);
+
+    return (
+        <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 flex flex-col gap-4 p-4">
+            <AgentIdentity />
+            <h2 className="font-bold text-lg flex items-center gap-2 border-t border-white/10 pt-4"><LucideShield className="text-green-400"/>Configuration</h2>
+            {status === 'AWAITING_KEY' && !apiKey && (
+                <div className="mb-3 p-3 bg-yellow-500/10 border border-yellow-600 rounded-md text-yellow-300 text-sm">
+                    <p className="font-bold mb-1">API Key Required</p>
+                    <p>Genie needs a Gemini API Key to function. Please obtain your key and enter it below.</p>
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">
+                        Get your API Key from Google AI Studio
+                    </a>
+                    <p className="mt-1 text-xs text-yellow-400">Ensure your Firebase configuration (`__firebase_config`) is also correctly set up if you are self-hosting.</p>
+                </div>
+            )}
+            <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-400">Gemini API Key</label>
+                <input type="password" placeholder="Enter your API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                    className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none transition" />
+            </div>
+            <div className="flex flex-col gap-1 flex-grow">
+                <label className="text-sm font-medium text-gray-400">Project Goal</label>
+                <textarea placeholder="Describe the application you want to build..." value={localPrompt} onChange={(e) => setLocalPrompt(e.target.value)}
+                    className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm flex-grow resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
+                    rows={5} disabled={isRunning} />
+            </div>
+
+            <div className="flex items-center justify-between mt-2 mb-1">
+                <label className="text-sm font-medium text-gray-400">Additional Guidance (Optional)</label>
+                <button
+                    onClick={() => useGenieStore.getState().toggleManualRefinementActive()}
+                    className={`text-xs px-2 py-1 rounded-md transition-colors ${useGenieStore(s => s.isManualRefinementActive) ? 'bg-primary-20 text-primary' : 'bg-gray-700 hover:bg-gray-600'}`}
+                    disabled={isRunning}
+                >
+                    {useGenieStore(s => s.isManualRefinementActive) ? 'Hide Guidance' : 'Show Guidance'}
+                </button>
+            </div>
+
+            {useGenieStore(s => s.isManualRefinementActive) && (
+                <div className="flex flex-col gap-1 mb-3">
+                    <textarea
+                        placeholder="E.g., Prioritize React components, use a specific library for charts, avoid using iframes..."
+                        value={useGenieStore(s => s.manualRefinements)}
+                        onChange={(e) => useGenieStore.getState().setManualRefinements(e.target.value)}
+                        className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm flex-grow resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
+                        rows={4}
+                        disabled={isRunning}
+                    />
+                    <p className="text-xs text-gray-500">This guidance will be given to the agent before it starts planning.</p>
+                </div>
+            )}
+
+            <div className="flex gap-2">
+                <button onClick={handleStart} disabled={!apiKey || !localPrompt || isRunning}
+                    className="flex-grow bg-primary hover:opacity-90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-md flex items-center justify-center gap-2 transition-all duration-200 shadow-md hover:shadow-lg">
+                    {isRunning ? <LucideLoader className="animate-spin" /> : <LucidePlay />}
+                    {isRunning ? "Working..." : "Launch Agent"}
+                </button>
+                 <button onClick={() => useGenieStore.getState().clearCurrentProject()} disabled={isRunning}
+                    className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-600 text-white font-bold p-2 rounded-md transition-all duration-200" title="Clear and start new">
+                   <LucideFileText />
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const ProjectManager = () => {
+    const { projects, setCurrentProject, currentProjectId, userId, db } = useGenieStore();
+    const deleteProject = async (projectId) => {
+        if (db && userId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, projectId);
+            try { await deleteDoc(projectRef); useGenieStore.getState().clearCurrentProject(); }
+            catch (error) { console.error("Error deleting project:", error); }
+        }
+    };
+    return (
+        <div className="bg-black/30 backdrop-blur-sm rounded-lg p-4 flex flex-col gap-2 shadow-lg flex-grow overflow-y-auto border border-white/10">
+            <h2 className="font-bold text-lg flex items-center gap-2"><LucideFolder className="text-yellow-400"/>Saved Projects</h2>
+            <div className="space-y-2 overflow-y-auto">
+                {projects.length === 0 ? ( <p className="text-sm text-gray-500">No saved projects found.</p> ) : (
+                    projects.map(p => (
+                        <div key={p.id} className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${currentProjectId === p.id ? 'bg-primary-20' : 'bg-gray-800/50 hover:bg-gray-700/50'}`}>
+                            <div onClick={() => setCurrentProject(p.id)} className="flex-grow">
+                                <p className="font-semibold truncate text-sm">{p.prompt}</p>
+                                <p className="text-xs text-gray-400">{new Date(p.createdAt).toLocaleString()}</p>
+                            </div>
+                            <button onClick={() => deleteProject(p.id)} className="text-red-500 hover:text-red-400 p-1 ml-2"><LucideTrash2 size={16}/></button>
                         </div>
-                        <div className="flex gap-2">
-                             <button onClick={() => onDelete(bot.id)} className="builder-button bg-red-500/80 hover:bg-red-500"><Trash2 size={16}/></button>
-                            <button onClick={() => onLoad(bot.id)} className="builder-button bg-cyan-500/80 hover:bg-cyan-500">Load</button>
-                        </div>
-                    </div>
-                )) : (
-                    <p className="text-center text-gray-400 py-8">You have no saved bots. Go create one!</p>
+                    ))
                 )}
             </div>
-             <button onClick={onCreate} className="w-full mt-6 menu-button bg-gradient-to-r from-cyan-500 to-blue-500">
-                <Wrench className="inline-block mr-2" /> Build a New Bot
-            </button>
         </div>
-    </div>
-);
+    );
+};
 
+const ProjectHealthPanel = () => {
+    const { status, correction, projectFiles, testResults } = useGenieStore();
+    const errorCount = testResults?.issues?.length || 0;
+    const fileCount = Object.keys(projectFiles).length;
 
-const PartCategory = ({ category }) => {
-    const [isOpen, setIsOpen] = useState(true);
+    if (status === 'IDLE' || status.includes('AWAITING')) return null;
+
     return (
-        <div className="bg-white/5 rounded-lg border border-cyan-400/20 overflow-hidden transition-all duration-300">
-            <button onClick={() => setIsOpen(!isOpen)} className="w-full flex justify-between items-center p-4 bg-white/10 hover:bg-white/20 transition">
-                <div className="flex items-center gap-3"><span className="text-cyan-400">{category.icon}</span><h3 className="font-bold text-lg uppercase tracking-wider">{category.name}</h3></div>
-                {isOpen ? <ChevronUp /> : <ChevronDown />}
-            </button>
-            {isOpen && <div className="p-4 space-y-3">{Object.entries(category.items).map(([partKey, part]) => (
-                <div 
-                    key={partKey} 
-                    draggable 
-                    onDragStart={(e) => {
-                        // Transfer the part's unique key as plain text for robustness.
-                        e.dataTransfer.setData("text/plain", partKey);
-                    }} 
-                    className="p-3 bg-black/40 rounded-md cursor-grab active:cursor-grabbing hover:bg-cyan-400/20 group border border-transparent hover:border-cyan-400/50 transition">
-                        <h4 className="font-bold text-white">{part.name}</h4>
-                        <p className="text-xs text-gray-400 group-hover:text-gray-300 transition">{part.description}</p>
-                        <div className="flex justify-between text-xs mt-2 text-cyan-300">
-                            <span>Cost: {part.cost}</span>
-                            <span>Weight: {part.weight}</span>
-                        </div>
+        <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 p-4">
+            <h2 className="font-bold text-lg flex items-center gap-2 mb-3"><LucideActivity className="text-primary"/>Project Health</h2>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="bg-black/20 p-3 rounded-md">
+                    <p className="text-gray-400">Status</p>
+                    <p className="font-bold text-base">{status}</p>
                 </div>
-            ))}</div>}
-        </div>
-    );
-};
-
-
-const PartPalette = ({ onClear, onTest, onSave, onExit }) => (
-    <div className="h-full w-full bg-black/80 backdrop-blur-md p-4 flex flex-col gap-4 overflow-y-auto">
-        <div className="flex justify-between items-center border-b-2 border-cyan-400/50 pb-3">
-             <button onClick={onExit} className="p-2 rounded-full hover:bg-white/10 transition"><ArrowLeft size={20}/></button>
-            <h2 className="text-2xl font-bold text-center uppercase tracking-widest" style={{ fontFamily: "'Orbitron', sans-serif" }}>Parts</h2>
-             <div className="w-8"></div>
-        </div>
-        <div className="flex-grow space-y-4">{Object.values(PART_DEFINITIONS).map(cat => <PartCategory key={cat.id} category={cat} />)}</div>
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-cyan-400/20">
-            <button onClick={onClear} className="builder-button bg-red-500/80 hover:bg-red-500"><Trash2 size={16}/> Clear</button>
-            <button onClick={onSave} className="builder-button bg-blue-500/80 hover:bg-blue-500"><Save size={16}/> Save</button>
-            <button onClick={onTest} className="col-span-2 builder-button bg-green-500/80 hover:bg-green-500"><TestTube2 size={16}/> Test in Arena</button>
-        </div>
-    </div>
-);
-
-const StatBar = ({ label, value, max, icon, colorClass = "from-cyan-400 to-blue-500" }) => (
-    <div>
-        <div className="flex justify-between items-center text-sm mb-1">
-            <div className="flex items-center gap-2 text-cyan-300">{icon}<span className="font-bold uppercase tracking-wider">{label}</span></div>
-            <span className="text-white font-mono">{value} / {max}</span>
-        </div>
-        <div className="w-full bg-black/50 rounded-full h-2.5 border border-white/10"><div className={`bg-gradient-to-r ${colorClass} h-full rounded-full transition-all duration-500`} style={{ width: `${Math.min((value / max) * 100, 100)}%` }}></div></div>
-    </div>
-);
-
-const BotStats = ({ bot }) => (
-    <div className="w-full bg-black/80 backdrop-blur-md p-4 rounded-lg border border-cyan-400/20">
-        <h2 className="text-xl font-bold text-center uppercase tracking-widest border-b-2 border-cyan-400/50 pb-2 mb-4" style={{ fontFamily: "'Orbitron', sans-serif" }}>{bot?.name || "Bot Stats"}</h2>
-        {bot ? (<div className="space-y-4">
-            <StatBar label="Health" value={bot.stats.maxHealth} max={500} icon={<Heart size={16}/>} colorClass="from-green-400 to-cyan-500" />
-            <StatBar label="Weight" value={bot.stats.weight} max={120} icon={<Weight size={16}/>} colorClass="from-orange-400 to-red-500" />
-            <StatBar label="Cost" value={bot.stats.cost} max={5000} icon={<Coins size={16}/>} colorClass="from-yellow-400 to-orange-500" />
-            <StatBar label="Armor" value={bot.stats.armor} max={200} icon={<Shield size={16}/>} colorClass="from-blue-400 to-purple-500" />
-        </div>) : <p className="text-center text-gray-400">No bot loaded.</p>}
-    </div>
-);
-
-const HealthBar = ({ name, health, maxHealth, isPlayer }) => (
-    <div className={`w-full max-w-sm p-3 rounded-lg border-2 ${isPlayer ? 'border-cyan-400' : 'border-red-500'} bg-black/70`}>
-        <div className="flex justify-between items-center mb-1">
-            <span className="font-bold uppercase text-white tracking-wider">{name}</span>
-            <span className="font-mono text-white">{Math.max(0, Math.ceil(health))}/{maxHealth}</span>
-        </div>
-        <div className="w-full bg-gray-700 rounded-full h-4 border border-black/50">
-            <div className={`h-full rounded-full transition-all duration-300 ${isPlayer ? 'bg-gradient-to-r from-cyan-400 to-blue-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`} style={{ width: `${(Math.max(0, health) / maxHealth) * 100}%` }}></div>
-        </div>
-    </div>
-);
-
-const BattleHUD = ({ battleState, onExit }) => (
-    <div className="absolute inset-0 p-4 pointer-events-none flex flex-col justify-between">
-        <div className="flex flex-col md:flex-row justify-center gap-4">
-            <HealthBar name={battleState.player.name} health={battleState.player.health} maxHealth={battleState.player.maxHealth} isPlayer={true} />
-            <HealthBar name={battleState.enemy.name} health={battleState.enemy.health} maxHealth={battleState.enemy.maxHealth} isPlayer={false} />
-        </div>
-        
-        {battleState.message && (
-             <div className="absolute inset-0 flex items-center justify-center">
-                 <div className="text-center bg-black/80 p-8 rounded-xl backdrop-blur-sm">
-                     <h2 className="text-6xl font-black text-white" style={{ fontFamily: "'Orbitron', sans-serif" }}>{battleState.message}</h2>
-                     {battleState.winner && <button onClick={onExit} className="mt-4 menu-button bg-cyan-500 pointer-events-auto">Back to Builder</button>}
-                 </div>
-             </div>
-        )}
-
-        <div className="flex justify-between items-end">
-            <button onClick={onExit} className="menu-button bg-gray-700/80 pointer-events-auto">Exit</button>
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-black/70 border-2 border-gray-600">
-                <Timer className="text-yellow-400" />
-                <span className="text-3xl text-white font-mono" style={{ textShadow: '0 0 5px #facc15' }}>{battleState.timer.toFixed(1)}</span>
-            </div>
-        </div>
-    </div>
-);
-
-
-// --- 3D / LOGIC COMPONENTS ---
-
-const BotBuilderView = ({ bot, updateCurrentBot, onSave, onTest, onExit }) => {
-    const [isPaletteOpen, setPaletteOpen] = useState(true);
-    const builderRef = useRef();
-    
-    const handleClear = () => {
-        if(window.confirm("Are you sure you want to clear this bot? All unsaved changes will be lost.")) {
-            builderRef.current?.clearAllParts();
-        }
-    }
-    
-    return (
-        <div className="relative w-full h-full flex flex-col lg:flex-row bg-gray-800 rounded-2xl shadow-2xl overflow-hidden">
-            <button onClick={() => setPaletteOpen(!isPaletteOpen)} className="lg:hidden absolute top-4 left-4 z-30 p-2 bg-black/50 backdrop-blur-sm rounded-md text-white">{isPaletteOpen ? <X/> : <Menu/>}</button>
-            
-            <div className={`absolute lg:static top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out w-full max-w-sm lg:w-1/4 lg:max-w-xs ${isPaletteOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-                <PartPalette onClear={handleClear} onTest={onTest} onSave={onSave} onExit={onExit} />
-            </div>
-            
-            <div className="flex-grow h-full w-full relative">
-                <BuilderCanvas ref={builderRef} bot={bot} updateCurrentBot={updateCurrentBot} />
-            </div>
-            
-            <div className="hidden lg:block absolute bottom-4 right-4 z-10 w-80"><BotStats bot={bot} /></div>
-            <div className="lg:hidden p-2 bg-gray-900"><BotStats bot={bot} /></div>
-        </div>
-    );
-};
-
-
-const createPartMesh = (partData) => {
-    let geometry;
-    const material = new THREE.MeshStandardMaterial({ color: partData.color || 0xcccccc, metalness: 0.8, roughness: 0.4 });
-    const { type, size } = partData.geometry;
-
-    switch (type) {
-        case 'box':
-            geometry = new THREE.BoxGeometry(...size);
-            break;
-        case 'cylinder':
-            geometry = new THREE.CylinderGeometry(size[0], size[0], size[1], size[2]);
-            break;
-        case 'wedge':
-            const [width, height, depth] = size;
-            const shape = new THREE.Shape();
-            shape.moveTo(-width / 2, -height / 2);
-            shape.lineTo(width / 2, -height / 2);
-            shape.lineTo(width / 2, height / 2);
-            geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
-            geometry.center();
-            break;
-        default:
-            geometry = new THREE.BoxGeometry(1, 1, 1);
-    }
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
-};
-
-const createCannonShape = (geometry) => {
-    const { type, size } = geometry;
-    switch (type) {
-        case 'box':
-            return new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
-        case 'cylinder':
-            return new CANNON.Cylinder(size[0], size[0], size[1], size[2]);
-        case 'wedge': // Cannon.js doesn't have a native wedge, approximate with a Box
-            return new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
-        default:
-            return new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5));
-    }
-};
-
-const BuilderCanvas = forwardRef(({ bot, updateCurrentBot }, ref) => {
-    const mountRef = useRef(null);
-    const scene = useRef(null);
-    const camera = useRef(null);
-    const renderer = useRef(null);
-    const controls = useRef(null);
-    const raycaster = useRef(new THREE.Raycaster());
-    const mouse = useRef(new THREE.Vector2());
-    
-    // Store refs to three.js objects and bot parts
-    const botContainer = useRef(null); // A THREE.Group holding all part meshes
-    const attachmentPointMeshes = useRef([]);
-
-    useImperativeHandle(ref, () => ({
-        clearAllParts: () => {
-            // Remove all parts except the chassis if it exists
-            const chassis = bot.parts.find(p => ALL_PARTS[p.key].categoryId === 'chassis');
-            updateCurrentBot(chassis ? [chassis] : []);
-        },
-    }));
-
-    // Rebuild the entire bot mesh when the 'bot.parts' prop changes
-    useEffect(() => {
-        if (!botContainer.current || !bot) return;
-
-        // Clear existing meshes
-        while (botContainer.current.children.length) {
-            botContainer.current.remove(botContainer.current.children[0]);
-        }
-
-        // Re-add meshes for current parts
-        bot.parts.forEach(part => {
-            const partDef = ALL_PARTS[part.key];
-            if (partDef) {
-                const mesh = createPartMesh(partDef);
-                mesh.position.copy(part.pos);
-                mesh.quaternion.copy(part.quat);
-                mesh.userData = { partInstanceId: part.instanceId, key: part.key };
-                botContainer.current.add(mesh);
-            }
-        });
-
-        // Update attachment point visuals
-        updateAttachmentVisuals();
-
-    }, [bot]); // Depends on the whole bot object to update on part changes
-
-    // Setup the initial Three.js scene
-    useEffect(() => {
-        const currentMount = mountRef.current;
-        scene.current = new THREE.Scene();
-        scene.current.background = new THREE.Color(0x1a1a2e);
-        scene.current.fog = new THREE.Fog(0x1a1a2e, 20, 100);
-
-        camera.current = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
-        camera.current.position.set(6, 6, 6);
-
-        renderer.current = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.current.setSize(currentMount.clientWidth, currentMount.clientHeight);
-        renderer.current.setPixelRatio(window.devicePixelRatio);
-        renderer.current.shadowMap.enabled = true;
-        currentMount.appendChild(renderer.current.domElement);
-
-        controls.current = new OrbitControls(camera.current, renderer.current.domElement);
-        controls.current.enableDamping = true;
-        
-        // Lighting
-        scene.current.add(new THREE.AmbientLight(0x404040, 3));
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        directionalLight.position.set(10, 20, 5);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.mapSize.set(2048, 2048);
-        scene.current.add(directionalLight);
-
-        // Ground grid
-        const gridHelper = new THREE.GridHelper(40, 40, 0x00ffff, 0x444444);
-        gridHelper.material.transparent = true;
-        gridHelper.material.opacity = 0.3;
-        scene.current.add(gridHelper);
-        
-        // Bot container
-        botContainer.current = new THREE.Group();
-        scene.current.add(botContainer.current);
-
-        let animationFrameId;
-        const animate = () => {
-            animationFrameId = requestAnimationFrame(animate);
-            controls.current.update();
-            renderer.current.render(scene.current, camera.current);
-        };
-        animate();
-        
-        const handleResize = () => {
-            if(!currentMount) return;
-            camera.current.aspect = currentMount.clientWidth / currentMount.clientHeight;
-            camera.current.updateProjectionMatrix();
-            renderer.current.setSize(currentMount.clientWidth, currentMount.clientHeight);
-        };
-        window.addEventListener('resize', handleResize);
-
-        return () => {
-            cancelAnimationFrame(animationFrameId);
-            window.removeEventListener('resize', handleResize);
-            if(renderer.current && currentMount) {
-                 // Check if the renderer's DOM element is still a child before removing
-                if(renderer.current.domElement.parentNode === currentMount){
-                    currentMount.removeChild(renderer.current.domElement);
-                }
-            }
-        };
-    }, []);
-    
-    const updateAttachmentVisuals = () => {
-        // Clear old ones
-        attachmentPointMeshes.current.forEach(mesh => scene.current.remove(mesh));
-        attachmentPointMeshes.current = [];
-
-        if (!bot) return;
-
-        const chassisPart = bot.parts.find(p => ALL_PARTS[p.key].categoryId === 'chassis');
-        if (!chassisPart) return;
-
-        const chassisDef = ALL_PARTS[chassisPart.key];
-        if (!chassisDef.attachmentPoints) return;
-        
-        chassisDef.attachmentPoints.forEach((point, index) => {
-            const isOccupied = bot.parts.some(p => p.attachmentIndex === index);
-            if (isOccupied) return;
-
-            const geometry = new THREE.TorusGeometry(0.2, 0.05, 8, 24);
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.7, wireframe: true });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.fromArray(point.pos).add(chassisPart.pos); // Add chassis position
-            mesh.rotation.x = Math.PI / 2;
-            mesh.userData.isAttachmentPoint = true;
-            mesh.userData.attachmentIndex = index;
-            scene.current.add(mesh);
-            attachmentPointMeshes.current.push(mesh);
-        });
-    }
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        const partKey = e.dataTransfer.getData("text/plain");
-        if (!partKey) {
-            console.warn("Drop event did not contain part data.");
-            return;
-        }
-        
-        const partData = ALL_PARTS[partKey];
-        if (!partData || !bot) return;
-        
-        const rect = mountRef.current.getBoundingClientRect();
-        mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.current.setFromCamera(mouse.current, camera.current);
-        
-        const isChassis = partData.categoryId === 'chassis';
-
-        if (isChassis) {
-            if (bot.parts.some(p => ALL_PARTS[p.key].categoryId === 'chassis')) {
-                 if (window.confirm("This will replace your current chassis and remove all attached parts. Continue?")) {
-                     updateCurrentBot([{
-                        key: partKey,
-                        instanceId: `part_${Date.now()}`,
-                        pos: new THREE.Vector3(0, partData.geometry.size[1]/2, 0),
-                        quat: new THREE.Quaternion(),
-                    }]);
-                }
-            } else {
-                 updateCurrentBot([{
-                    key: partKey,
-                    instanceId: `part_${Date.now()}`,
-                    pos: new THREE.Vector3(0, partData.geometry.size[1]/2, 0),
-                    quat: new THREE.Quaternion(),
-                }]);
-            }
-        } else {
-            const intersects = raycaster.current.intersectObjects(attachmentPointMeshes.current);
-            if (intersects.length > 0) {
-                const pointMesh = intersects[0].object;
-                const newPart = {
-                    key: partKey,
-                    instanceId: `part_${Date.now()}`,
-                    pos: pointMesh.position.clone(),
-                    quat: new THREE.Quaternion(),
-                    attachmentIndex: pointMesh.userData.attachmentIndex,
-                };
-                updateCurrentBot([...bot.parts, newPart]);
-            }
-        }
-    };
-
-    const handleRightClick = (e) => {
-        e.preventDefault();
-        if(!bot) return;
-
-        const rect = mountRef.current.getBoundingClientRect();
-        mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.current.setFromCamera(mouse.current, camera.current);
-
-        const intersects = raycaster.current.intersectObjects(botContainer.current.children);
-
-        if (intersects.length > 0) {
-            const clickedMesh = intersects[0].object;
-            const { partInstanceId, key } = clickedMesh.userData;
-            
-            if (ALL_PARTS[key].categoryId === 'chassis') {
-                showModal("Cannot Remove Chassis", "The chassis cannot be removed directly. Drag a new chassis into the scene to replace it.");
-                setTimeout(hideModal, 3000);
-                return;
-            }
-
-            if (window.confirm("Remove this part?")) {
-                 updateCurrentBot(bot.parts.filter(p => p.instanceId !== partInstanceId));
-            }
-        }
-    };
-
-    if (!bot) {
-        return (
-            <div ref={mountRef} className="w-full h-full flex items-center justify-center text-gray-500 bg-gray-900">
-                <p>Create a new bot or load one from the Garage to start.</p>
-            </div>
-        );
-    }
-
-    return <div ref={mountRef} className="w-full h-full cursor-pointer" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()} onContextMenu={handleRightClick}></div>;
-});
-
-
-const ArenaView = ({ playerBotData, setView, showModal }) => {
-    const mountRef = useRef(null);
-    const [battleState, setBattleState] =useState(null);
-    const keys = useRef({});
-
-    useEffect(() => {
-        const handleKey = (e, value) => { keys.current[e.code] = value; };
-        window.addEventListener('keydown', (e) => handleKey(e, true));
-        window.addEventListener('keyup', (e) => handleKey(e, false));
-        return () => {
-            window.removeEventListener('keydown', (e) => handleKey(e, true));
-            window.removeEventListener('keyup', (e) => handleKey(e, false));
-        };
-    }, []);
-
-    useEffect(() => {
-        const currentMount = mountRef.current;
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x1a1a2e);
-        scene.fog = new THREE.Fog(0x1a1a2e, 50, 200);
-
-        const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.shadowMap.enabled = true;
-        currentMount.appendChild(renderer.domElement);
-        
-        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
-        // const debuggerInstance = CannonDebugger(scene, world, {});
-
-        // --- Lighting ---
-        scene.add(new THREE.AmbientLight(0x404040, 3));
-        const sun = new THREE.DirectionalLight(0xffffff, 2);
-        sun.position.set(20, 30, 10);
-        sun.castShadow = true;
-        sun.shadow.mapSize.set(4096, 4096);
-        scene.add(sun);
-        
-        // --- Arena Geometry ---
-        const groundMat = new CANNON.Material({friction: 0.5, restitution: 0.1});
-        const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: groundMat });
-        groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-        world.addBody(groundBody);
-
-        const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({color: 0x222233, metalness:0.4, roughness: 0.6}));
-        floorMesh.rotation.x = -Math.PI / 2;
-        floorMesh.receiveShadow = true;
-        scene.add(floorMesh);
-
-        // --- Bot Creation Logic (Compound Body) ---
-        const createBotObject = (botData, isPlayer) => {
-            const chassisPart = botData.parts.find(p => ALL_PARTS[p.key]?.categoryId === 'chassis');
-            if (!chassisPart) {
-                console.error("Bot has no chassis!", botData);
-                return { body: new CANNON.Body(), mesh: new THREE.Group(), weapons: [], health: 1, maxHealth: 1, name: "Invalid Bot" };
-            }
-            
-            const botBody = new CANNON.Body({
-                mass: botData.stats.weight,
-                material: groundMat,
-                position: new CANNON.Vec3(isPlayer ? -15 : 15, 5, 0),
-            });
-
-            const botMesh = new THREE.Group();
-            const botWeapons = [];
-
-            botData.parts.forEach(part => {
-                const partDef = ALL_PARTS[part.key];
-                if (!partDef) return;
-
-                const shape = createCannonShape(partDef.geometry);
-                const mesh = createPartMesh(partDef);
-                
-                const offset = new CANNON.Vec3().copy(part.pos).vsub(new CANNON.Vec3().copy(chassisPart.pos));
-                const quaternion = new CANNON.Quaternion().copy(part.quat);
-
-                botBody.addShape(shape, offset, quaternion);
-                mesh.position.copy(offset);
-                mesh.quaternion.copy(quaternion);
-                botMesh.add(mesh);
-
-                if (partDef.categoryId === 'weapons') {
-                    botWeapons.push({ key: part.key, mesh, body: botBody, offset, cooldown: 0 });
-                }
-            });
-
-            world.addBody(botBody);
-            scene.add(botMesh);
-            
-            return { body: botBody, mesh: botMesh, weapons: botWeapons, health: botData.stats.maxHealth, maxHealth: botData.stats.maxHealth, name: botData.name, isPlayer };
-        }
-
-        const player = createBotObject(playerBotData, true);
-
-        // --- Create Enemy Bot ---
-        const enemyTemplate = PREBUILT_BOTS[player.name === 'The Mauler' ? 'lancer' : 'mauler'];
-        const enemy = createBotObject(enemyTemplate, false);
-        
-        let battleTime = 90;
-        let countdown = 3;
-        let winner = null;
-
-        setBattleState({ player, enemy, timer: battleTime, message: `GET READY`, winner: null });
-
-        const countdownInterval = setInterval(() => {
-            countdown--;
-            if (countdown <= 0) {
-                setBattleState(s => (s ? { ...s, message: "FIGHT!" } : null));
-                setTimeout(() => setBattleState(s => (s ? { ...s, message: null } : null)), 1000);
-                clearInterval(countdownInterval);
-            } else {
-                setBattleState(s => (s ? { ...s, message: `${countdown}` } : null));
-            }
-        }, 1000);
-        
-        let animationFrameId;
-        const clock = new THREE.Clock();
-        const animate = () => {
-            animationFrameId = requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-
-            world.step(1/60, delta);
-            // if(debuggerInstance) debuggerInstance.update();
-
-            if(countdown <= 0 && !winner) {
-                const speed = (playerBotData.stats.speed || 10) * 8;
-                const turnSpeed = speed * 0.8;
-                const moveDirection = new THREE.Vector3(0,0, (keys.current['KeyW'] ? -1 : 0) + (keys.current['KeyS'] ? 1 : 0));
-                const turnDirection = (keys.current['KeyA'] ? 1 : 0) + (keys.current['KeyD'] ? -1 : 0);
-                
-                if(moveDirection.lengthSq() > 0) {
-                    const force = moveDirection.applyQuaternion(player.body.quaternion).multiplyScalar(speed);
-                    player.body.applyForce(new CANNON.Vec3(force.x, 0, force.z), player.body.position);
-                }
-                player.body.torque.y = turnDirection * turnSpeed;
-
-                 if (keys.current['Space']) {
-                    player.weapons.forEach(weapon => {
-                        if (weapon.cooldown <= 0 && weapon.key === 'weapon_flipper') {
-                            const flipperWorldPos = new CANNON.Vec3();
-                            player.body.pointToWorldFrame(weapon.offset, flipperWorldPos);
-                            const upwardForce = new CANNON.Vec3(0, 1, 0).scale(playerBotData.stats.weight * 300);
-                            player.body.applyImpulse(upwardForce, flipperWorldPos);
-                            weapon.cooldown = 2;
-                        }
-                    });
-                }
-                 player.weapons.forEach(w => w.cooldown = Math.max(0, w.cooldown - delta));
-                
-                const toPlayer = new CANNON.Vec3();
-                player.body.position.vsub(enemy.body.position, toPlayer);
-                const distance = toPlayer.length();
-                toPlayer.normalize();
-
-                if (distance > 5) {
-                    const aiForce = toPlayer.scale((enemyTemplate.stats.speed || 10) * 6);
-                    enemy.body.applyForce(new CANNON.Vec3(aiForce.x, 0, aiForce.z), enemy.body.position);
-                }
-                 const angle = Math.atan2(player.body.position.x - enemy.body.position.x, player.body.position.z - enemy.body.position.z);
-                 const targetQuaternion = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,1,0), angle);
-                 enemy.body.quaternion.slerp(targetQuaternion, 0.1, enemy.body.quaternion);
-            }
-
-            [player, enemy].forEach(bot => {
-                if (bot.body && bot.mesh) {
-                    bot.mesh.position.copy(bot.body.position);
-                    bot.mesh.quaternion.copy(bot.body.quaternion);
-                }
-            });
-
-            const cameraOffset = new THREE.Vector3(0, 10, 18);
-            const cameraLookAt = player.mesh.position;
-            const cameraPosition = cameraOffset.clone().add(player.mesh.position);
-            camera.position.lerp(cameraPosition, 0.1);
-            camera.lookAt(cameraLookAt);
-            
-            if (countdown <= 0 && !winner) {
-                battleTime -= delta;
-                
-                const checkWinner = () => {
-                    if (battleTime <= 0) return player.health > enemy.health ? player.name : enemy.name;
-                    if (player.health <= 0) return enemy.name;
-                    if (enemy.health <= 0) return player.name;
-                    if (player.body.position.y < -10) return enemy.name;
-                    if (enemy.body.position.y < -10) return player.name;
-                    return null;
-                };
-
-                winner = checkWinner();
-                
-                if (winner) {
-                     setBattleState(s => (s ? { ...s, winner, message: `${winner} WINS!` } : null));
-                } else {
-                     setBattleState(s => (s ? {...s, timer: battleTime} : null));
-                }
-            }
-            
-            renderer.render(scene, camera);
-        };
-        animate();
-        
-        const onCollision = (e) => {
-            if (countdown > 0 || winner) return;
-
-            const impactStrength = e.contact.getImpactVelocityAlongNormal();
-            if (impactStrength > 2) {
-                const damage = Math.min(impactStrength * 1.5, 25);
-                const bodyA = e.bodyA;
-                const bodyB = e.bodyB;
-
-                setBattleState(s => {
-                     if (!s) return null;
-                    let newPlayerHealth = s.player.health;
-                    let newEnemyHealth = s.enemy.health;
-
-                    if (bodyA === player.body || bodyB === player.body) newPlayerHealth -= damage;
-                    if (bodyA === enemy.body || bodyB === enemy.body) newEnemyHealth -= damage;
-                   
-                    return {...s, player: {...s.player, health: newPlayerHealth }, enemy: {...s.enemy, health: newEnemyHealth } };
-                });
-            }
-        };
-
-        world.addEventListener('beginContact', onCollision);
-
-        return () => {
-            cancelAnimationFrame(animationFrameId);
-            clearInterval(countdownInterval);
-            if(renderer.domElement && currentMount && renderer.domElement.parentNode === currentMount) {
-                currentMount.removeChild(renderer.domElement);
-            }
-            world.removeEventListener('beginContact', onCollision);
-        };
-    }, [playerBotData]);
-
-    return (
-        <div className="w-full h-full relative">
-            <div ref={mountRef} className="w-full h-full"></div>
-            {battleState && <BattleHUD battleState={battleState} onExit={() => setView('quick_battle_select')} />}
-        </div>
-    );
-};
-
-
-// --- MAIN APP COMPONENT ---
-export default function App() {
-    const { gameState, firebase, setView, createNewBot, loadBot, updateCurrentBot, saveCurrentBot, deleteBot, startQuickBattle, showModal, hideModal } = useGame();
-
-    const handleSave = () => {
-        if (!gameState.currentBot || gameState.currentBot.parts.length === 0) {
-            showModal("Cannot Save", <p>Your bot is empty. Add some parts first!</p>);
-            setTimeout(hideModal, 2000);
-            return;
-        }
-        showModal("Save Bot", <SaveBotModal bot={gameState.currentBot} onSave={saveCurrentBot} onCancel={hideModal} />);
-    };
-
-    const handleTest = () => {
-        const hasChassis = gameState.currentBot?.parts.some(p => ALL_PARTS[p.key]?.categoryId === 'chassis');
-        if (!hasChassis) {
-            showModal("Cannot Test", <p>Your bot must have a chassis before entering the arena.</p>);
-            setTimeout(hideModal, 3000);
-            return;
-        }
-        setView('arena');
-    };
-
-    const renderCurrentView = () => {
-        if (gameState.isLoading) {
-            return <div className="absolute inset-0 flex items-center justify-center text-white"><Loader2 className="animate-spin mr-4"/> Loading...</div>;
-        }
-
-        switch(gameState.currentView) {
-            case 'bot_builder':
-                return <BotBuilderView 
-                            bot={gameState.currentBot} 
-                            updateCurrentBot={updateCurrentBot}
-                            onSave={handleSave}
-                            onTest={handleTest}
-                            onExit={() => setView('garage')}
-                        />;
-            case 'arena':
-                return <ArenaView playerBotData={gameState.currentBot} setView={setView} showModal={showModal}/>;
-            case 'garage':
-                return <GarageView bots={gameState.savedBots} onLoad={loadBot} onCreate={createNewBot} onDelete={deleteBot} onBack={()=>setView('main_menu')} />;
-            case 'quick_battle_select':
-                return <QuickBattleSelect onSelect={startQuickBattle} onBack={() => setView('main_menu')} />;
-            case 'main_menu':
-            default:
-                return <MainMenu onStartBuilder={createNewBot} onOpenGarage={() => setView('garage')} onQuickBattle={() => setView('quick_battle_select')} />;
-        }
-    }
-    
-    return (
-        <>
-            <style>{`@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto:wght@300;400;700&display=swap'); body { font-family: 'Roboto', sans-serif; background: linear-gradient(135deg, #0a0a0a, #1a1a2e, #16213e); color: #e0e0e0; } .menu-button { padding: 12px 24px; border-radius: 8px; color: white; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s ease; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4); border: 2px solid transparent; cursor: pointer; } .menu-button:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); } .builder-button { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 6px; color: white; font-weight: bold; transition: all 0.2s; cursor: pointer; }`}</style>
-            <main className="w-screen h-screen flex items-center justify-center p-0 md:p-4 bg-transparent">
-                <div className="w-full h-full max-w-screen-2xl relative">
-                    {renderCurrentView()}
-                    <Modal modal={gameState.modal} onConfirm={() => { /* Handle generic confirm */ }} onCancel={hideModal} />
+                <div className="bg-black/20 p-3 rounded-md">
+                    <p className="text-gray-400">Files</p>
+                    <p className="font-bold text-base">{fileCount}</p>
                 </div>
-            </main>
-        </>
+                <div className="bg-black/20 p-3 rounded-md">
+                    <p className="text-gray-400">Corrections</p>
+                    <p className="font-bold text-base">{correction.iteration}</p>
+                </div>
+                <div className={`p-3 rounded-md ${errorCount > 0 ? 'bg-red-500/20' : 'bg-green-500/20'}`}>
+                    <p className={`${errorCount > 0 ? 'text-red-300' : 'text-green-300'}`}>Issues Found</p>
+                    <p className="font-bold text-base">{errorCount}</p>
+                </div>
+            </div>
+        </div>
     );
 }
+
+const MissionControl = () => {
+    const missionControl = useGenieStore(state => state.missionControl);
+    const projectFiles = useGenieStore(state => state.projectFiles); // Select for button disable logic
+    const { setViewCodeForStep } = useGenieStore(); // Get action
+
+    if (!missionControl?.steps?.length) return null;
+
+    const progress = missionControl.totalWorkUnits > 0 ? (missionControl.completedWorkUnits / missionControl.totalWorkUnits) * 100 : 0;
+
+    const getStatusStyles = (status) => {
+        switch (status) {
+            case 'complete': return 'bg-green-500/20 border-green-500';
+            case 'in-progress': return 'bg-primary-20 border-primary animate-pulse';
+            case 'pending': return 'bg-gray-500/20 border-gray-500';
+            default: return 'bg-gray-700';
+        }
+    };
+
+    const handleStepClick = (logIndex) => {
+        if (logIndex !== -1) {
+            const logElement = document.getElementById(`log-item-${logIndex}`);
+            if (logElement) {
+                logElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                logElement.classList.add('animate-pulse-once');
+                setTimeout(() => logElement.classList.remove('animate-pulse-once'), 2000);
+            }
+        }
+    };
+
+    return (
+        <div className="flex-shrink-0 bg-black/30 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-white/10">
+            <h2 className="text-lg font-bold mb-3">Mission Control</h2>
+            <div className="w-full bg-black/30 rounded-full h-2.5 mb-4">
+                <div className="bg-gradient-to-r from-primary to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ backgroundImage: `linear-gradient(to right, rgb(var(--primary)), #6366f1)`, width: `${progress}%` }}></div>
+            </div>
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2">
+                {missionControl.steps.map((step, index) => (
+                    <Tooltip key={index} text={step.description}>
+                        <div onClick={() => handleStepClick(step.logIndex)} className={`flex-shrink-0 w-56 p-3 rounded-lg border-2 transition-all cursor-pointer ${getStatusStyles(step.status)}`}> {/* Increased width w-56 */}
+                            <div className="flex items-center justify-between mb-1">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full`}>{step.status}</span>
+                                <span className="text-xs text-gray-400">WU: {step.time_estimate}</span>
+                            </div>
+                            <p className="text-sm font-medium truncate" title={step.description}>{step.description}</p> {/* Added title attribute */}
+                            <p className="text-xs text-gray-500 capitalize">File: {step.file}</p>
+                            <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2"> {/* New div for actions */}
+                                <Tooltip text={`View code for ${step.file}`}>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setViewCodeForStep(step.file);
+                                        }}
+                                        className="p-1 hover:bg-white/20 rounded transition-colors"
+                                        disabled={!projectFiles.hasOwnProperty(step.file)}
+                                    >
+                                        <LucideFileCode size={14} className="text-blue-400" />
+                                    </button>
+                                </Tooltip>
+                                <Tooltip text="Suggest an edit for this step">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            useGenieStore.getState().openSuggestionModal(step, index); // Pass full step and its index
+                                        }}
+                                        className="p-1 hover:bg-white/20 rounded transition-colors"
+                                    >
+                                        <LucideWand2 size={14} className="text-yellow-400" />
+                                    </button>
+                                </Tooltip>
+                            </div>
+                        </div>
+                    </Tooltip>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const LogFilterControls = () => {
+    const { logFilter, toggleLogFilter, logSearchTerm, setLogSearchTerm } = useGenieStore(); // Add logSearchTerm and setLogSearchTerm
+    const filters = [ // Define filters array here
+        { key: 'system', icon: LucideShield, color: 'text-purple-400' },
+        { key: 'agent', icon: LucideBot, color: 'text-gray-400' },
+        { key: 'user', icon: LucideUser, color: 'text-blue-400' },
+        { key: 'tool', icon: LucideWrench, color: 'text-yellow-400' },
+        { key: 'success', icon: LucideCheckCircle, color: 'text-green-400' },
+        { key: 'error', icon: LucideAlertTriangle, color: 'text-red-400' },
+    ];
+
+    return (
+        <div className="flex-shrink-0 p-2 border-b border-white/10 bg-black/20 flex items-center justify-between gap-2"> {/* Changed to justify-between */}
+            <div className="flex items-center gap-2"> {/* Group for existing filters */}
+                <LucideFilter className="text-gray-500" size={16} />
+                {filters.map(f => (
+                    <Tooltip key={f.key} text={`Toggle ${f.key} logs`}>
+                        <button onClick={() => toggleLogFilter(f.key)} className={`p-1 rounded-md transition-colors ${logFilter[f.key] ? 'bg-primary-20' : 'bg-gray-700/50 hover:bg-gray-600'}`}>
+                            <f.icon className={f.color} size={16} />
+                        </button>
+                    </Tooltip>
+                ))}
+            </div>
+            <div className="flex-grow max-w-xs"> {/* Search input group */}
+                <input
+                    type="text"
+                    placeholder="Search logs..."
+                    value={logSearchTerm}
+                    onChange={(e) => setLogSearchTerm(e.target.value)}
+                    className="bg-gray-900/70 border border-white/10 rounded-md p-1.5 text-xs w-full focus:ring-1 focus:ring-primary focus:outline-none transition"
+                />
+            </div>
+        </div>
+    );
+};
+
+const LogsPanel = () => {
+    const { logs, logFilter, logSearchTerm } = useGenieStore(); // Add logSearchTerm
+    const scrollRef = useRef(null);
+
+    const filteredLogs = logs.filter(log => {
+        if (!logFilter[log.type]) return false;
+        if (logSearchTerm.trim() === "") return true; // If search is empty, don't filter by text
+        return log.message.toLowerCase().includes(logSearchTerm.toLowerCase());
+    });
+
+    useEffect(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, [filteredLogs]);
+
+    return (
+        <div className="flex flex-col h-full">
+            <LogFilterControls />
+            <div ref={scrollRef} className="flex-grow overflow-y-auto p-4">
+                <div className="space-y-3 font-mono text-sm">
+                    {filteredLogs.map((log, index) => (
+                        <div key={index} id={`log-item-${logs.indexOf(log)}`} className="flex items-start gap-3 p-1 rounded-md">
+                            <LogIcon type={log.type} />
+                            <div className="flex-grow">
+                                <p className="whitespace-pre-wrap">{log.message}</p>
+                                <p className="text-xs text-gray-500">{new Date(log.timestamp).toLocaleTimeString()}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const LogIcon = ({ type }) => {
+    switch (type) {
+        case 'user': return <LucideUser className="text-blue-400 flex-shrink-0 mt-1" size={16} />;
+        case 'agent': return <LucideBot className="text-gray-400 flex-shrink-0 mt-1" size={16} />;
+        case 'system': return <LucideShield className="text-purple-400 flex-shrink-0 mt-1" size={16} />;
+        case 'tool': return <LucideWrench className="text-yellow-400 flex-shrink-0 mt-1" size={16} />;
+        case 'success': return <LucideCheckCircle className="text-green-400 flex-shrink-0 mt-1" size={16} />;
+        case 'error': return <LucideAlertTriangle className="text-red-400 flex-shrink-0 mt-1" size={16} />;
+        default: return <LucideBot className="text-gray-400 flex-shrink-0 mt-1" size={16} />;
+    }
+};
+
+const CodeForge = () => {
+    const { projectFiles, activeFile, setActiveFile } = useGenieStore();
+    const fileNames = Object.keys(projectFiles);
+
+    if (fileNames.length === 0) {
+        return <div className="flex items-center justify-center h-full text-gray-500">Code Forge is waiting for a mission plan...</div>;
+    }
+
+    const getFileIcon = (fileName) => {
+        if (fileName.endsWith('.html')) return <LucideFileCode className="text-orange-400" size={16} />;
+        if (fileName.endsWith('.css')) return <LucideFileCode className="text-blue-400" size={16} />;
+        if (fileName.endsWith('.js')) return <LucideFileCode className="text-yellow-400" size={16} />;
+        return <LucideFileJson size={16} />;
+    };
+
+    return (
+        <div className="flex flex-col h-full">
+            <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
+                <nav className="-mb-px flex space-x-2" aria-label="Tabs">
+                    {fileNames.map(name => (
+                        <button key={name} onClick={() => setActiveFile(name)}
+                            className={`whitespace-nowrap py-3 px-2 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${activeFile === name ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'}`}>
+                            {getFileIcon(name)} {name}
+                        </button>
+                    ))}
+                </nav>
+            </div>
+            <div className="flex-grow overflow-y-auto p-4 bg-gray-900/50">
+                <LiveCodePanel key={activeFile} />
+            </div>
+        </div>
+    );
+};
+
+const LiveCodePanel = () => {
+    const { projectFiles, activeFile, status } = useGenieStore();
+    const [displayedCode, setDisplayedCode] = useState('');
+    const fullCode = projectFiles[activeFile] || '';
+    const isCoding = status === 'CODING' || status === 'CORRECTING';
+
+    useEffect(() => {
+        let i = 0;
+        let animationFrameId;
+
+        if (isCoding) {
+            setDisplayedCode(''); // Reset for typing effect
+            const type = () => {
+                if (i < fullCode.length) {
+                    setDisplayedCode(fullCode.substring(0, i + 1));
+                    i++;
+                    animationFrameId = requestAnimationFrame(type);
+                }
+            };
+            type();
+        } else {
+            setDisplayedCode(fullCode);
+        }
+
+        return () => cancelAnimationFrame(animationFrameId);
+    }, [fullCode, isCoding, activeFile]);
+
+    return <pre className="text-xs whitespace-pre-wrap">{displayedCode}</pre>;
+};
+
+const IntegratedPreviewPanel = () => {
+    const files = useGenieStore(state => state.projectFiles);
+    const [previewContent, setPreviewContent] = useState('');
+
+    useEffect(() => {
+        const { 'index.html': html, 'style.css': css, 'script.js': js } = files;
+        if (!html) { setPreviewContent(''); return; }
+        const constructedHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><script src="https://cdn.tailwindcss.com"></script><style>${css || ''}</style></head><body>${html}<script>${js || ''}</script></body></html>`;
+        setPreviewContent(constructedHtml);
+    }, [files]);
+
+    return (
+        <div className="w-full h-full flex flex-col">
+            <h2 className="text-lg font-bold p-3 border-b border-white/10 flex-shrink-0 bg-black/20">Integrated Preview</h2>
+            <div className="flex-grow bg-white">
+                <iframe srcDoc={previewContent} title="Integrated Preview" className="w-full h-full border-none" sandbox="allow-scripts allow-modals allow-forms" />
+            </div>
+        </div>
+    );
+};
+
+const RefinementModal = () => {
+    const { refinement, submitRefinementAnswer } = useGenieStore();
+    const [currentAnswer, setCurrentAnswer] = useState('');
+    if (!refinement.isActive) return null;
+    const currentQuestionIndex = refinement.answers.length;
+    const currentQuestion = refinement.questions[currentQuestionIndex];
+    const handleSubmit = () => { if (currentAnswer.trim()) { submitRefinementAnswer(currentAnswer); setCurrentAnswer(''); } };
+    return (
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-lg flex flex-col gap-4 border border-white/10">
+                <h2 className="text-xl font-bold flex items-center gap-2"><LucideMessageCircle className="text-primary"/>Clarification Needed</h2>
+                <div className="bg-gray-900/70 p-4 rounded-md"> <p className="font-medium">{currentQuestion}</p> </div>
+                <div className="flex gap-2">
+                    <input type="text" value={currentAnswer} onChange={(e) => setCurrentAnswer(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSubmit()} placeholder="Your answer..."
+                        className="flex-grow bg-gray-700 border border-gray-600 rounded-md p-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none transition" />
+                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold p-2 rounded-md flex items-center justify-center gap-2 transition-colors"> <LucideSend size={16} /> </button>
+                </div>
+                <p className="text-xs text-gray-500 text-center">Question {currentQuestionIndex + 1} of {refinement.questions.length}</p>
+            </div>
+        </div>
+    );
+};
+
+const StatusBar = () => {
+    const { status, currentTask, userId } = useGenieStore();
+    const getStatusIndicator = () => {
+        switch (status) {
+            case 'AWAITING_KEY': case 'AWAITING_AUTH': case 'ERROR': return <LucideAlertTriangle className="text-red-400" />;
+            case 'IDLE': return <LucideBot className="text-gray-400" />;
+            case 'COMPLETED': return <LucideCheckCircle className="text-green-400" />;
+            case 'REFINING': case 'ANALYZING': return <LucideMessageCircle className="text-primary" />;
+            default: return <LucideLoader className="animate-spin text-primary" />;
+        }
+    };
+    return ( <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0"> <div className="flex items-center gap-2"> {getStatusIndicator()} <span>{currentTask}</span> </div> {userId && <div className="font-mono text-gray-500">UserID: {userId}</div>} </footer> );
+};
+
+// --- AGENT LIFECYCLE & LLM LOGIC (v2.7) ---
+const useAgentOrchestrator = () => {
+    const orchestratorRunning = useRef(false);
+
+    useEffect(() => {
+        const unsubscribe = useGenieStore.subscribe(
+            (state) => ({ status: state.status, isAuthReady: state.isAuthReady, currentProjectId: state.currentProjectId, refinementIsActive: state.refinement.isActive }),
+            async (currentState, prevState) => {
+                if(currentState.status === prevState.status) return; // Only run on status change
+
+                const { status, isAuthReady, currentProjectId, refinementIsActive } = currentState;
+                if (!isAuthReady || !currentProjectId || refinementIsActive || orchestratorRunning.current) {
+                    return;
+                }
+
+                const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
+                if (!activeStates.includes(status)) {
+                    return;
+                }
+
+                orchestratorRunning.current = true;
+                const storeState = useGenieStore.getState();
+                try {
+                    switch (storeState.status) {
+                        case 'REFINING': await runRefinementPhase(storeState); break;
+                        case 'ANALYZING': await runAnalysisPhase(storeState); break;
+                        case 'PLANNING': await runPlanningPhase(storeState); break;
+                        case 'CODING': await runCodingPhase(storeState); break;
+                        case 'TESTING': await runTestingPhase(storeState); break;
+                        case 'CORRECTING': await runCorrectionPhase(storeState); break;
+                        case 'REFACTORING': await runReflectionPhase(storeState); break;
+                    }
+                } catch (error) {
+                    useGenieStore.getState().updateStatus('ERROR', `Orchestrator Error: ${error.message}`);
+                } finally {
+                    orchestratorRunning.current = false;
+                }
+            },
+            { fireImmediately: true }
+        );
+        return unsubscribe;
+    }, []);
+};
+
+
+const callGeminiAPI = async (promptText, apiKey, isJson = false) => {
+    const { addLog, updateStatus } = useGenieStore.getState();
+    addLog(`Sending request to Gemini API...`, 'system', { prompt: promptText });
+    try {
+        const payload = { contents: [{ role: "user", parts: [{ text: promptText }] }] };
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!response.ok) { const errorBody = await response.text(); throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`); }
+        const result = await response.json();
+        if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+            const text = result.candidates[0].content.parts[0].text;
+            addLog(`Received response from Gemini API.`, 'system', { response: text });
+            if (isJson) return text.replace(/```(json)?/g, '').trim();
+            return text;
+        } else {
+            throw new Error(`Invalid or empty response from Gemini API: ${JSON.stringify(result)}`);
+        }
+    } catch (error) {
+        addLog(`Error interacting with Gemini: ${error.message}`, 'error', { prompt: promptText });
+        updateStatus('ERROR', 'API communication failed.');
+        return null;
+    }
+};
+
+const runRefinementPhase = async (state) => {
+    const { addLog, setAgentIdentity, setRefinementQuestions, apiKey, prompt, manualRefinements, isManualRefinementActive } = state; // Add manualRefinements and isManualRefinementActive
+
+    addLog('Entering refinement phase. Analyzing prompt clarity and adopting persona.', 'agent');
+
+    let combinedPrompt = prompt;
+    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
+        combinedPrompt += `
+
+User's Additional Guidance:
+${manualRefinements}`;
+        addLog(`Incorporating user's additional guidance: "${manualRefinements}"`, 'system');
+    }
+
+    const refinementPrompt = `You are a project intake analyst. Analyze the user's request (including any additional guidance) to determine clarity, assign a confidence score, and adopt a persona. Personas: "Creative Maverick", "Data Architect", "UI Specialist", "Generalist". Respond with a JSON object containing: "is_clear" (boolean), "questions" (array of strings, empty if clear), "confidence_score" (integer 0-100), and "agent_persona" (string from list). User Request: "${combinedPrompt}" Generate the JSON analysis.`;
+    const jsonString = await callGeminiAPI(refinementPrompt, apiKey, true);
+    if (jsonString) {
+        try {
+            const analysis = JSON.parse(jsonString);
+            setAgentIdentity({ persona: analysis.agent_persona, confidence: analysis.confidence_score });
+            setRefinementQuestions(analysis.is_clear ? [] : analysis.questions || []);
+        } catch (e) {
+            addLog(`Failed to parse refinement analysis: ${e.message}. Assuming prompt is clear.`, 'error');
+            setAgentIdentity({ persona: 'Generalist', confidence: 50 }); setRefinementQuestions([]);
+        }
+    } else {
+         addLog('Could not get refinement analysis. Proceeding with original prompt.', 'system');
+         setRefinementQuestions([]);
+    }
+};
+
+const runAnalysisPhase = async (state) => {
+    const { addLog, setGoalAnalysis, apiKey, prompt, refinement, manualRefinements, isManualRefinementActive, updateStatus } = state; // Add manualRefinements and isManualRefinementActive
+
+    addLog('Performing deep goal analysis...', 'agent');
+
+    let basePrompt = prompt;
+    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
+        basePrompt += `
+
+User's Additional Guidance (provided before refinement questions):
+${manualRefinements}`;
+    }
+
+    let fullPrompt = `Original Goal (including any pre-refinement guidance): ${basePrompt}` +
+                    (refinement.answers.length > 0 ? `
+
+User Clarifications (Q&A):
+${refinement.questions.map((q, i) => `- Q: ${q}
+  A: ${refinement.answers[i]}`).join('
+')}` : '');
+
+    const analysisPrompt = `You are a requirements analyst. Analyze the following refined user goal (which includes initial prompt, any pre-refinement guidance, and Q&A clarifications). Extract the core intent, key entities/features, and suggest appropriate web technologies.
+Respond with a JSON object with three keys:
+1. "intent": A short sentence describing the user's primary goal.
+2. "entities": An array of strings listing the key nouns, features, or components mentioned (e.g., "user login form", "3D cube", "data dashboard").
+3. "technologies": An array of strings listing the technologies needed (e.g., "HTML", "CSS", "JavaScript", "Three.js").
+
+Full User Goal Context:
+${fullPrompt}
+
+Generate the JSON analysis.`;
+    const jsonString = await callGeminiAPI(analysisPrompt, apiKey, true);
+    if (jsonString) {
+        try {
+            const analysis = JSON.parse(jsonString);
+            setGoalAnalysis(analysis);
+        } catch (e) {
+            addLog(`Failed to parse goal analysis: ${e.message}. Moving directly to planning.`, 'error');
+            updateStatus('PLANNING', 'Architecting Solution...');
+        }
+    }
+};
+
+const runPlanningPhase = async (state) => {
+    const { addLog, setMissionPlan, apiKey, prompt, refinement, db, userId, currentProjectId, updateStatus, agentIdentity, goalAnalysis, manualRefinements, isManualRefinementActive } = state;
+    addLog('Entering planning phase.', 'agent');
+
+    let basePrompt = prompt;
+    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
+        basePrompt += `
+
+User's Additional Guidance (provided before refinement questions):
+${manualRefinements}`;
+    }
+
+    let fullPrompt = `Original Goal (including any pre-refinement guidance): ${basePrompt}` +
+                     (refinement.answers.length > 0 ? `
+
+User Clarifications (Q&A):
+${refinement.questions.map((q, i) => `- Q: ${q}
+  A: ${refinement.answers[i]}`).join('
+')}` : '');
+
+    let capabilitiesContext = "";
+    if (agentIdentity.capabilities && agentIdentity.capabilities.length > 0) {
+        capabilitiesContext = `\n\nThis agent is operating as a "${agentIdentity.persona}" with the following guiding principles/capabilities: ${agentIdentity.capabilities.join('; ')}. Please consider these in your plan.`;
+    }
+
+    const planningPrompt = `You are a master software architect. Your task is to create a technical plan as a JSON object. This object must contain:
+1.  "summary": A brief overview of the proposed solution.
+2.  "files": An array of strings with the filenames to be created (e.g., ["index.html", "style.css", "script.js"]).
+3.  "steps": An array of objects, where each object has:
+    - "file": The name of the file this step applies to.
+    - "description": A concise instruction for what to code in this step.
+    - "time_estimate": An integer for work units (e.g., 5, 10, 20).
+
+Based on the full context below, generate the JSON plan. Ensure the plan includes HTML, CSS, and JavaScript files for a complete web application.
+
+Full Context (Original Goal, Pre-Refinement Guidance, Q&A Clarifications):
+${fullPrompt}${capabilitiesContext}
+
+Generate the JSON plan.`;
+    const planJsonString = await callGeminiAPI(planningPrompt, apiKey, true);
+    if (planJsonString) {
+        try {
+            const parsedPlan = JSON.parse(planJsonString);
+            if (!parsedPlan.files || !parsedPlan.steps) throw new Error("Plan is missing 'files' or 'steps' key.");
+            
+            const { avatar, ...identityToSave } = agentIdentity;
+
+            setMissionPlan(parsedPlan);
+
+            if (db && userId && currentProjectId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+                await updateDoc(projectRef, {
+                    plan: parsedPlan,
+                    agentIdentity: identityToSave,
+                    goalAnalysis,
+                    missionControl: get().missionControl,
+                    stepSuggestions: get().stepSuggestions, // Persist suggestions
+                    status: 'CODING'
+                });
+            }
+        } catch (e) { updateStatus('ERROR', `Failed to understand plan: ${e.message}`); }
+    }
+};
+
+const runCodingPhase = async (state) => {
+    const { addLog, updateFileContent, completeCoding, apiKey, missionControl, updateMissionProgress, db, userId, currentProjectId, updateStatus, agentIdentity } = state; // Add agentIdentity
+    if (!missionControl.steps?.length) return;
+    addLog(`Commencing mission as "${agentIdentity.persona}". Executing ${missionControl.steps.length} steps.`, 'agent');
+    let generatedFilesContext = {};
+
+    for (let i = 0; i < missionControl.steps.length; i++) {
+        const step = missionControl.steps[i];
+        updateMissionProgress(i);
+        addLog(`[${step.file}]: Executing step: "${step.description}"`, 'agent');
+
+        const contextPrompt = Object.entries(generatedFilesContext).map(([name, content]) => `You have already generated the following file named "${name}":\n\`\`\`\n${content}\n\`\`\``).join('\n\n');
+
+        let capabilitiesContext = "";
+        if (agentIdentity.capabilities && agentIdentity.capabilities.length > 0) {
+            capabilitiesContext = `\n\nRemember, you are operating as a "${agentIdentity.persona}" with these guiding principles: ${agentIdentity.capabilities.join('; ')}. Adhere to them.`;
+        }
+
+        const codingPrompt = `You are an expert developer acting as a "${agentIdentity.persona}". Your current task is to write code for the file "${step.file}".
+${contextPrompt ? `\nFor context, here are the other files you've created in this project:\n${contextPrompt}` : ''}
+Your specific instruction for this step is: "${step.description}".${capabilitiesContext}
+Based on this, write ONLY the raw code block for "${step.file}".
+- If writing HTML, ensure you link to the CSS and JS files correctly (e.g., <link rel="stylesheet" href="style.css"> and <script src="script.js" defer></script>).
+- Do not include explanations, comments, or markdown formatting like \`\`\` around the code. Just the raw code itself.`;
+
+        const codeChunk = await callGeminiAPI(codingPrompt, apiKey);
+        if (codeChunk) {
+            const cleanChunk = codeChunk.replace(/```(html|css|javascript|js)?/g, '').trim() + '\n\n';
+            updateFileContent(step.file, cleanChunk, true);
+            generatedFilesContext[step.file] = (get().projectFiles[step.file] || '');
+        } else { updateStatus('ERROR', 'Code generation failed for step.'); return; }
+    }
+
+    completeCoding();
+    if (db && userId && currentProjectId) {
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+        await updateDoc(projectRef, {
+            projectFiles: get().projectFiles,
+            missionControl: get().missionControl,
+            status: 'TESTING'
+        });
+    }
+};
+
+const runTestingPhase = async (state) => {
+    const { addLog, setTestResults, apiKey, projectFiles, db, userId, currentProjectId, updateStatus } = state;
+    addLog('Entering testing and auditing phase.', 'agent');
+    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
+    const testingPrompt = `You are a meticulous QA engineer. Review the following project files. Identify potential bugs, inconsistencies between files, or deviations from best practices. Provide findings as a JSON object with "summary" and "issues" keys. If no issues, "issues" array MUST be empty. Project Files:\n${filesString}\nGenerate the JSON audit.`;
+    const testJsonString = await callGeminiAPI(testingPrompt, apiKey, true);
+    if (testJsonString) {
+        try {
+            const parsedResults = JSON.parse(testJsonString);
+            setTestResults(parsedResults);
+            if (db && userId && currentProjectId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+                const nextStatus = (parsedResults.issues && parsedResults.issues.length > 0) ? 'CORRECTING' : 'REFACTORING';
+                await updateDoc(projectRef, { testResults: parsedResults, status: nextStatus });
+            }
+        } catch (e) { updateStatus('ERROR', 'Failed to understand test results.'); }
+    }
+};
+const runCorrectionPhase = async (state) => {
+    const { addLog, setCodeAndIterate, apiKey, projectFiles, testResults, correction, db, userId, currentProjectId, updateStatus } = state;
+    if (correction.iteration >= correction.maxIterations) {
+        addLog(`Max correction attempts reached. Proceeding with known issues.`, 'error');
+        updateStatus('REFACTORING', 'Finalizing & Documenting...'); return;
+    }
+    addLog(`Entering correction phase (Attempt ${correction.iteration + 1})`, 'agent');
+    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
+    const correctionPrompt = `You are a senior developer fixing buggy code. Below are the project files and a list of QA issues. Your task is to return a single JSON object where keys are filenames and values are the complete, corrected code for that file. Original Files:\n${filesString}\nIssues to Fix:\n- ${testResults.issues.join('\n- ')}\nGenerate the JSON object containing the full, corrected code for all files.`;
+    const correctedJsonString = await callGeminiAPI(correctionPrompt, apiKey, true);
+    if (correctedJsonString) {
+        try {
+            const correctedFiles = JSON.parse(correctedJsonString);
+            setCodeAndIterate(correctedFiles);
+            if (db && userId && currentProjectId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+                await updateDoc(projectRef, { projectFiles: correctedFiles, status: 'TESTING' });
+            }
+        } catch (e) { updateStatus('ERROR', 'Code correction failed to parse.'); }
+    } else { updateStatus('ERROR', 'Code correction failed to generate.'); }
+};
+
+const runReflectionPhase = async (state) => {
+    const { addLog, setReflections, apiKey, prompt, projectFiles, testResults, db, userId, currentProjectId, updateStatus } = state;
+    addLog('Entering self-reflection phase.', 'agent');
+    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
+    const reflectionPrompt = `You are a Staff Software Engineer conducting a post-mortem. Based on the initial goal, the final code, and the QA audit, provide a brief reflection as a JSON object with "assessment", "improvements", and "learnings" keys. Initial Goal: "${prompt}" Final Code:\n${filesString}\nQA Audit: ${JSON.stringify(testResults)}\nGenerate the JSON reflection.`;
+    const reflectionJsonString = await callGeminiAPI(reflectionPrompt, apiKey, true);
+    if (reflectionJsonString) {
+        try {
+            const parsedReflections = JSON.parse(reflectionJsonString);
+            setReflections(parsedReflections);
+            if (db && userId && currentProjectId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+                await updateDoc(projectRef, { reflections: parsedReflections, status: 'COMPLETED' });
+            }
+        } catch (e) { updateStatus('ERROR', 'Failed to understand reflections.'); }
+    }
+};
+
+export default App;
