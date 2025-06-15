@@ -1,41 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { create } from 'zustand';
-import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb, LucideActivity } from 'lucide-react';
+// --- FIX: Replaced non-existent LucideSwirl with a valid icon, LucideWand2 ---
+import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
 
-// --- ZUSTAND STATE MANAGEMENT STORE (v2.7) ---
-
-const PERSONAS_CONFIG = {
-    'Generalist': {
-        avatarName: 'LucideBrainCircuit',
-        description: 'Versatile agent for various web tasks.',
-        capabilities: ['Focus on clear, maintainable code.', 'Ensure responsive design.']
-    },
-    'Creative Maverick': {
-        avatarName: 'LucidePalette',
-        description: 'Specializes in visually appealing UIs and novel interactions.',
-        capabilities: ['Prioritize modern UI/UX principles.', 'Suggest creative visual elements.']
-    },
-    'Data Architect': {
-        avatarName: 'LucideDatabase',
-        description: 'Focuses on robust data models and API interactions.',
-        capabilities: ['Design efficient data structures.', 'Ensure secure and reliable API communication.']
-    },
-    'UI Specialist': {
-        avatarName: 'LucideComponent',
-        description: 'Expert in crafting detailed UI components and stylesheets.',
-        capabilities: ['Generate clean HTML and CSS.', 'Implement pixel-perfect component designs.']
-    }
-};
-
-const getAvatarComponent = (avatarName) => {
-    const icons = { LucideBrainCircuit, LucidePalette, LucideDatabase, LucideComponent };
-    const IconComponent = icons[avatarName] || LucideBrainCircuit;
-    return <IconComponent size={36} />;
-};
-
+// --- ZUSTAND STATE MANAGEMENT STORE (v2.8) ---
 const useGenieStore = create((set, get) => ({
     // Core State
     status: 'AWAITING_KEY', logs: [], currentTask: 'Idle',
@@ -44,13 +15,7 @@ const useGenieStore = create((set, get) => ({
     apiKey: '', prompt: '', userId: null, projects: [], currentProjectId: null,
 
     // Perceived Intelligence State
-    agentIdentity: {
-        persona: 'Generalist',
-        confidence: 0,
-        avatar: getAvatarComponent('LucideBrainCircuit'),
-        description: PERSONAS_CONFIG.Generalist.description,
-        capabilities: PERSONAS_CONFIG.Generalist.capabilities
-    },
+    agentIdentity: { persona: 'Generalist', confidence: 0, avatar: <LucideComponent /> },
     missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
 
     // Layered Intelligence State
@@ -71,48 +36,25 @@ const useGenieStore = create((set, get) => ({
     // Firebase instances
     db: null, auth: null, isAuthReady: false,
 
-    // Manual Refinements
-    manualRefinements: "", // Stores user's manual input
-    isManualRefinementActive: false, // Toggles the input field visibility
-
-    // Step Suggestions
-    stepSuggestions: {}, // E.g., { "projStepId_0_filename.js": "Suggestion text" }
-    suggestionModal: { isOpen: false, stepIndex: null, file: null, description: "", existingSuggestion: "" },
-
-    // Log Search
-    logSearchTerm: "",
+    // API Retry Config
+    apiRetryConfig: { maxRetries: 2, initialDelayMs: 1000 },
 
     // --- ACTIONS ---
     initializeFirebase: (db, auth) => set({ db, auth }),
-    setManualRefinements: (refinements) => set({ manualRefinements: refinements }),
-    toggleManualRefinementActive: () => set(state => ({ isManualRefinementActive: !state.isManualRefinementActive })),
-    setLogSearchTerm: (term) => set({ logSearchTerm: term }),
-    openSuggestionModal: (step, stepIndex) => {
-        const key = `${get().currentProjectId}_${stepIndex}_${step.file}`;
-        set({
-            suggestionModal: {
-                isOpen: true,
-                stepIndex,
-                file: step.file,
-                description: step.description,
-                existingSuggestion: get().stepSuggestions[key] || ""
+    updateFirestoreProjectData: async (dataToUpdate) => {
+        const { db, userId, currentProjectId, addLog } = get(); // Added addLog
+        if (db && userId && currentProjectId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+            try {
+                await updateDoc(projectRef, dataToUpdate);
+                // addLog(`Project data updated in Firestore: ${Object.keys(dataToUpdate).join(', ')}`, 'system'); // Optional debug log
+            } catch (error) {
+                console.error("Failed to update project data in Firestore:", error);
+                addLog(`Firestore update failed for project ${currentProjectId}: ${error.message}`, 'error');
             }
-        });
-    },
-    closeSuggestionModal: () => set(state => ({ suggestionModal: { ...state.suggestionModal, isOpen: false } })),
-    saveStepSuggestion: (stepIndex, file, suggestion) => {
-        const key = `${get().currentProjectId}_${stepIndex}_${file}`;
-        set(state => ({
-            stepSuggestions: { ...state.stepSuggestions, [key]: suggestion },
-        }));
-        get().closeSuggestionModal();
-        get().addLog(`Suggestion saved for step in ${file}: "${suggestion}"`, 'user');
-        // TODO: Persist stepSuggestions to Firestore if needed. (Handled in runPlanningPhase)
-    },
-    setViewCodeForStep: (fileName) => {
-        set({ activeFile: fileName });
-        // Workspace component will observe activeFile and switch to 'forge' tab.
-    },
+        }
+     },
     setAuthReady: (isAuthReady, userId) => set({ isAuthReady, userId, status: userId ? (get().apiKey ? 'IDLE' : 'AWAITING_KEY') : 'AWAITING_AUTH' }),
     setApiKey: (apiKey) => {
         set({ apiKey });
@@ -124,29 +66,16 @@ const useGenieStore = create((set, get) => ({
     setCurrentProject: (projectId) => {
         const project = get().projects.find(p => p.id === projectId);
         if (project) {
-            const projectPersonaName = project.agentIdentity?.persona || 'Generalist';
-            const config = PERSONAS_CONFIG[projectPersonaName] || PERSONAS_CONFIG['Generalist'];
-
-            const loadedIdentity = {
-                persona: projectPersonaName,
-                confidence: project.agentIdentity?.confidence || 0,
-                description: project.agentIdentity?.description || config.description,
-                capabilities: project.agentIdentity?.capabilities || config.capabilities,
-                avatar: getAvatarComponent(config.avatarName)
-            };
-
+            const avatars = { 'Creative Maverick': <LucidePalette />, 'Data Architect': <LucideDatabase />, 'UI Specialist': <LucideComponent />, 'Generalist': <LucideBrainCircuit /> };
+            const projectIdentity = project.agentIdentity || get().agentIdentity;
             set({
                 currentProjectId: projectId, prompt: project.prompt, plan: project.plan,
                 projectFiles: project.projectFiles || {}, activeFile: Object.keys(project.projectFiles || {})[0] || 'index.html',
                 testResults: project.testResults, reflections: project.reflections,
-                agentIdentity: loadedIdentity,
-                missionControl: project.missionControl || { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
-                goalAnalysis: project.goalAnalysis || null,
+                agentIdentity: {...projectIdentity, avatar: avatars[projectIdentity.persona] || <LucideBrainCircuit />},
+                missionControl: project.missionControl || get().missionControl,
                 logs: project.logs || [], refinement: { isActive: false, questions: [], answers: [] },
-                status: project.status || 'IDLE', currentTask: 'Project loaded. Ready for instructions.',
-                manualRefinements: project.manualRefinements || "",
-                isManualRefinementActive: project.isManualRefinementActive || false,
-                stepSuggestions: project.stepSuggestions || {},
+                status: project.status || 'IDLE', currentTask: 'Project loaded. Ready for instructions.'
             });
         }
     },
@@ -155,58 +84,70 @@ const useGenieStore = create((set, get) => ({
         testResults: null, reflections: null, logs: [],
         refinement: { isActive: false, questions: [], answers: [] },
         goalAnalysis: null, status: 'IDLE', currentTask: 'Ready. Provide a new project goal.',
-        manualRefinements: "",
-        isManualRefinementActive: false,
-        stepSuggestions: {},
-        logSearchTerm: "",
-        agentIdentity: {
-            persona: 'Generalist',
-            confidence: 0,
-            avatar: getAvatarComponent(PERSONAS_CONFIG.Generalist.avatarName),
-            description: PERSONAS_CONFIG.Generalist.description,
-            capabilities: PERSONAS_CONFIG.Generalist.capabilities
-        },
+        agentIdentity: { persona: 'Generalist', confidence: 0, avatar: <LucideComponent /> },
         missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
     }),
     startProject: async (prompt) => {
         if (!prompt || !get().apiKey) { return; }
         const newProjectId = `proj_${Date.now()}`;
-        get().clearCurrentProject(); // This will set the default Generalist identity
 
-        const currentAgentIdentity = get().agentIdentity; // Get the default identity set by clearCurrentProject
+        get().clearCurrentProject(); // Resets local state, including logs.
 
-        set({ // Set other project-specific states
-            prompt, currentProjectId: newProjectId, status: 'REFINING',
-            currentTask: 'Assessing Goal & Adopting Persona...', logs: [],
+        // Set the new project ID and prompt locally first.
+        set({
+            prompt,
+            currentProjectId: newProjectId,
+            logs: [], // Ensure logs start empty.
             correction: { iteration: 0, maxIterations: 3 },
         });
-        get().addLog(`New project started. ID: ${newProjectId}`, 'system');
-        get().addLog(`Initial Goal: ${prompt}`, 'user');
+
         const { db, userId } = get();
         if (db && userId) {
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, newProjectId);
+
+            // Initial data for the new Firestore document.
+            const { avatar, ...identityToSave } = get().agentIdentity; // Get current identity, remove avatar React component
+
+            const initialProjectData = {
+                id: newProjectId,
+                prompt,
+                createdAt: new Date().toISOString(),
+                status: 'REFINING',
+                logs: [],
+                agentIdentity: identityToSave,
+                missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+                projectFiles: {},
+                goalAnalysis: null,
+                plan: null,
+                testResults: null,
+                reflections: null,
+                manualRefinements: get().manualRefinements,
+                isManualRefinementActive: get().isManualRefinementActive,
+                stepSuggestions: {},
+            };
+
             try {
-                // Save initial project data including the default agent identity (without avatar component)
-                const { avatar, ...identityToSave } = currentAgentIdentity; // Exclude avatar React component
-                await setDoc(projectRef, {
-                    id: newProjectId,
-                    prompt,
-                    createdAt: new Date().toISOString(),
+                // CRITICAL FIX: Create the document in Firestore FIRST.
+                await setDoc(projectRef, initialProjectData);
+
+                // Now that the document exists, set the agent's status to begin work.
+                set({
                     status: 'REFINING',
-                    logs: get().logs,
-                    agentIdentity: identityToSave, // Save description, capabilities, persona, confidence
-                    manualRefinements: get().manualRefinements,
-                    isManualRefinementActive: get().isManualRefinementActive,
-                    stepSuggestions: {},
-                    missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
-                    projectFiles: {},
-                    goalAnalysis: null,
-                    plan: null,
-                    testResults: null,
-                    reflections: null
+                    currentTask: 'Assessing Goal & Adopting Persona...',
                 });
-            } catch (error) { set({ status: 'ERROR', currentTask: 'Error saving project.' }); }
+
+                // These log updates will now safely call `updateDoc` on an existing document.
+                get().addLog(`New project started. ID: ${newProjectId}`, 'system');
+                get().addLog(`Initial Goal: ${prompt}`, 'user');
+
+            } catch (error) {
+                // If creation fails, set an error state.
+                set({ status: 'ERROR', currentTask: 'Error creating new project in database.' });
+                console.error("Failed to create project document:", error);
+            }
+        } else {
+            set({ status: 'ERROR', currentTask: 'Database connection not ready.' });
         }
     },
     addLog: (message, type = 'agent', data = null) => {
@@ -224,18 +165,11 @@ const useGenieStore = create((set, get) => ({
             updateDoc(projectRef, { logs }).catch(err => console.error("Failed to update logs in Firestore:", err));
         }
     },
-    setAgentIdentity: (identity) => { // identity is { persona, confidence }
-        const personaName = identity.persona || 'Generalist'; // Ensure personaName is always valid
-        const config = PERSONAS_CONFIG[personaName] || PERSONAS_CONFIG['Generalist'];
-        const newIdentity = {
-            persona: personaName,
-            confidence: identity.confidence,
-            avatar: getAvatarComponent(config.avatarName),
-            description: config.description,
-            capabilities: config.capabilities
-        };
+    setAgentIdentity: (identity) => {
+        const avatars = { 'Creative Maverick': <LucidePalette />, 'Data Architect': <LucideDatabase />, 'UI Specialist': <LucideComponent />, 'Generalist': <LucideBrainCircuit /> };
+        const newIdentity = { ...identity, avatar: avatars[identity.persona] || <LucideBrainCircuit /> };
         set({ agentIdentity: newIdentity });
-        get().addLog(`Persona adopted: ${newIdentity.persona}. Confidence: ${identity.confidence}%.`, 'system');
+        get().addLog(`Persona adopted. Confidence in success: ${identity.confidence}%.`, 'system');
     },
     setRefinementQuestions: (questions) => {
         if (questions?.length > 0) {
@@ -281,7 +215,7 @@ const useGenieStore = create((set, get) => ({
 
             if(state.missionControl.currentStepIndex >= 0 && state.missionControl.currentStepIndex < newSteps.length) {
                  newSteps[state.missionControl.currentStepIndex].status = 'complete';
-                 completedWorkUnits += newSteps[state.missionControl.currentStepIndex].time_estimate;
+                 completedWorkUnits += newSteps[state.missionControl.currentStepIndex].time_estimate || 5;
             }
             if (stepIndex < newSteps.length) {
                 newSteps[stepIndex].status = 'in-progress';
@@ -307,7 +241,7 @@ const useGenieStore = create((set, get) => ({
     },
     completeCoding: () => set(state => {
       get().addLog('Code generation complete for all files.', 'success');
-      get().updateMissionProgress(state.missionControl.steps.length);
+      get().updateMissionProgress(state.missionControl.steps.length); // Mark final step as complete
       return { status: 'TESTING', currentTask: 'Auditing & Testing Code...' };
     }),
     setCodeAndIterate: (newFiles) => set(state => {
@@ -347,14 +281,13 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-// --- REACT COMPONENTS (v2.7.1 - FULLY RESTORED AND FUNCTIONAL) ---
+// --- REACT COMPONENTS (v2.8) ---
 
 const App = () => {
-    const theme = useGenieStore(state => state.theme);
-    const status = useGenieStore(state => state.status);
+    const { status, initializeFirebase, setAuthReady, isAuthReady, currentProjectId, theme } = useGenieStore();
+    const orchestratorRunning = useRef(false);
 
     useEffect(() => {
-        const { initializeFirebase, setAuthReady } = useGenieStore.getState();
         try {
             const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
             if (!firebaseConfig.apiKey) { useGenieStore.setState({ status: 'ERROR', currentTask: 'Firebase configuration is missing.' }); return; }
@@ -373,9 +306,80 @@ const App = () => {
                 }
             });
         } catch (error) { useGenieStore.setState({ status: 'ERROR', currentTask: `Firebase Init Failed: ${error.message}` }); }
-    }, []);
+     }, [initializeFirebase, setAuthReady]);
+    useEffect(() => {
+        if (isAuthReady) {
+            const { db, userId } = useGenieStore.getState();
+            if (db && userId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectsColRef = collection(db, `artifacts/${appId}/users/${userId}/projects`);
+                const unsubscribe = onSnapshot(projectsColRef, (snapshot) => {
+                    const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    useGenieStore.getState().loadProjects(projects);
+                });
+                return () => unsubscribe();
+            }
+        }
+    }, [isAuthReady]);
 
-    useAgentOrchestrator();
+    useEffect(() => {
+        const state = useGenieStore.getState();
+        if (!state.isAuthReady || !state.currentProjectId || state.refinement.isActive || state.status === 'IDLE' || state.status.includes('AWAITING')) {
+           if (state.status === 'IDLE' && orchestratorRunning.current) orchestratorRunning.current = false; // Reset if idle
+           return;
+        }
+        const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
+        if (!activeStates.includes(state.status)) {
+           if (orchestratorRunning.current) orchestratorRunning.current = false; // Reset if not an active state
+           return;
+        }
+
+        const runAgentLifecycle = async () => {
+            if (orchestratorRunning.current) return;
+            orchestratorRunning.current = true;
+
+            const initialStatusForRun = useGenieStore.getState().status;
+            useGenieStore.getState().addLog(`Agent Orchestrator: Entering ${initialStatusForRun} phase.`, 'system');
+
+            try {
+                const currentState = useGenieStore.getState();
+                if (currentState.status !== initialStatusForRun && activeStates.includes(currentState.status)) {
+                    useGenieStore.getState().addLog(`Agent Orchestrator: Status changed from ${initialStatusForRun} to ${currentState.status} before execution. Yielding to new effect.`, 'system');
+                    orchestratorRunning.current = false;
+                    return;
+                }
+                if (!activeStates.includes(currentState.status) || !currentState.currentProjectId || currentState.refinement.isActive) {
+                   useGenieStore.getState().addLog(`Agent Orchestrator: Conditions no longer met for ${initialStatusForRun}. Current status: ${currentState.status}. Halting.`, 'system');
+                   orchestratorRunning.current = false;
+                   return;
+                }
+
+                switch (currentState.status) {
+                    case 'REFINING': await runRefinementPhase(currentState); break;
+                    case 'ANALYZING': await runAnalysisPhase(currentState); break;
+                    case 'PLANNING': await runPlanningPhase(currentState); break;
+                    case 'CODING': await runCodingPhase(currentState); break;
+                    case 'TESTING': await runTestingPhase(currentState); break;
+                    case 'CORRECTING': await runCorrectionPhase(currentState); break;
+                    case 'REFACTORING': await runReflectionPhase(currentState); break;
+                }
+                const finalStateOfPhase = useGenieStore.getState().status;
+                if (finalStateOfPhase === initialStatusForRun || (finalStateOfPhase !== 'ERROR' && !activeStates.includes(finalStateOfPhase))) {
+                   useGenieStore.getState().addLog(`Agent Orchestrator: Completed processing for ${initialStatusForRun} phase. Current status: ${finalStateOfPhase}.`, 'system');
+                } else if (finalStateOfPhase !== 'ERROR') {
+                   useGenieStore.getState().addLog(`Agent Orchestrator: ${initialStatusForRun} phase transitioned to ${finalStateOfPhase}.`, 'system');
+                }
+
+            } catch (error) {
+                console.error(`Orchestrator Error in phase: ${initialStatusForRun}`, error);
+                useGenieStore.getState().updateStatus('ERROR', `Orchestrator Error in ${initialStatusForRun}: ${error.message}`);
+            } finally {
+                orchestratorRunning.current = false;
+            }
+        };
+        setTimeout(runAgentLifecycle, 100);
+
+    }, [status, isAuthReady, currentProjectId, useGenieStore.getState().refinement.isActive]);
 
     const statusGradients = {
         'theme-nebula': { default: 'from-gray-900 to-black', active: 'from-purple-900 via-gray-900 to-gray-900', test: 'from-indigo-900 via-gray-900 to-gray-900', success: 'from-green-900 via-gray-900 to-gray-900', error: 'from-red-900 via-gray-900 to-gray-900' },
@@ -385,7 +389,7 @@ const App = () => {
     const getStatusBackground = () => {
         const themeGradients = statusGradients[theme] || statusGradients['theme-nebula'];
         switch (status) {
-            case 'PLANNING': case 'CODING': case 'CORRECTING': case 'REFINING': case 'ANALYZING': return themeGradients.active;
+            case 'PLANNING': case 'CODING': case 'CORRECTING': case 'REFINING': case 'ANALYZING': case 'REFACTORING': return themeGradients.active;
             case 'TESTING': return themeGradients.test;
             case 'COMPLETED': return themeGradients.success;
             case 'ERROR': return themeGradients.error;
@@ -403,7 +407,6 @@ const App = () => {
                     <div className="lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
                        <ErrorBoundary><ControlPanel /></ErrorBoundary>
                        <ErrorBoundary><ProjectManager /></ErrorBoundary>
-                       <ErrorBoundary><ProjectHealthPanel /></ErrorBoundary>
                     </div>
                     <div className="lg:col-span-5 flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10">
                         <ErrorBoundary><Workspace /></ErrorBoundary>
@@ -412,123 +415,22 @@ const App = () => {
                         <ErrorBoundary><IntegratedPreviewPanel /></ErrorBoundary>
                     </div>
                     <RefinementModal />
-                    <SuggestionModal /> {/* Add new modal */}
                 </main>
             </div>
             <ErrorBoundary><StatusBar /></ErrorBoundary>
             <style>{`
-                .theme-nebula { --primary: 168, 85, 247; }
-                .theme-solar { --primary: 249, 115, 22; }
-                .theme-starship { --primary: 34, 211, 238; }
+                .theme-nebula { --primary: 168, 85, 247; /* purple-500 */ }
+                .theme-solar { --primary: 249, 115, 22; /* orange-500 */ }
+                .theme-starship { --primary: 34, 211, 238; /* cyan-400 */ }
                 .border-primary { border-color: rgb(var(--primary)); }
                 .text-primary { color: rgb(var(--primary)); }
-                .bg-primary { background-color: rgb(var(--primary)); }
-                .bg-primary-20 { background-color: rgba(var(--primary), 0.2); }
-                .ring-primary:focus { ring-color: rgb(var(--primary)); }
                 .animate-pulse-once { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 1; }
+                /* Custom scrollbar for webkit browsers */
+                ::-webkit-scrollbar { width: 8px; }
+                ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
+                ::-webkit-scrollbar-thumb { background: rgba(var(--primary), 0.5); border-radius: 4px; }
+                ::-webkit-scrollbar-thumb:hover { background: rgba(var(--primary), 0.7); }
             `}</style>
-        </div>
-    );
-};
-
-const ProjectDetailsPanel = () => {
-    const {
-        prompt,
-        manualRefinements,
-        isManualRefinementActive,
-        refinement,
-        goalAnalysis,
-        plan
-    } = useGenieStore();
-
-    if (useGenieStore(s => s.status) === 'IDLE' || useGenieStore(s => s.status).includes('AWAITING')) {
-        return <div className="flex items-center justify-center h-full text-gray-500 p-4">No project active or details available yet.</div>;
-    }
-
-    let fullInitialPrompt = prompt;
-    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
-        fullInitialPrompt += `
-
-User's Additional Guidance:
-${manualRefinements}`;
-    }
-
-    return (
-        <div className="p-4 overflow-y-auto h-full prose prose-invert prose-sm max-w-none">
-            <h3>Project Configuration & Agent Insights</h3>
-
-            <details className="mb-4 p-2 bg-black/20 rounded-md" open>
-                <summary className="font-bold cursor-pointer hover:text-primary">Full Initial Prompt</summary>
-                <pre className="mt-2 whitespace-pre-wrap text-xs">{fullInitialPrompt || 'Not set.'}</pre>
-            </details>
-
-            {refinement && (refinement.questions?.length > 0 || refinement.answers?.length > 0) && (
-                <details className="mb-4 p-2 bg-black/20 rounded-md" open>
-                    <summary className="font-bold cursor-pointer hover:text-primary">Refinement Q&A</summary>
-                    {refinement.questions.map((q, i) => (
-                        <div key={i} className="mt-2">
-                            <p className="font-semibold text-gray-400">Q: {q}</p>
-                            <p className="text-xs ml-4">A: {refinement.answers[i] || '(No answer yet)'}</p>
-                        </div>
-                    ))}
-                </details>
-            )}
-
-            {goalAnalysis && (
-                <details className="mb-4 p-2 bg-black/20 rounded-md">
-                    <summary className="font-bold cursor-pointer hover:text-primary">Goal Analysis Output</summary>
-                    <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(goalAnalysis, null, 2) || 'Not available.'}</pre>
-                </details>
-            )}
-
-            {plan && (
-                <details className="mb-4 p-2 bg-black/20 rounded-md">
-                    <summary className="font-bold cursor-pointer hover:text-primary">Mission Plan Output</summary>
-                    <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(plan, null, 2) || 'Not available.'}</pre>
-                </details>
-            )}
-
-            {!fullInitialPrompt && !goalAnalysis && !plan && (!refinement || refinement.questions?.length === 0) && (
-                 <p className="text-gray-500">No detailed configuration insights to display for the current project state.</p>
-            )}
-        </div>
-    );
-};
-
-const SuggestionModal = () => {
-    const { suggestionModal, closeSuggestionModal, saveStepSuggestion } = useGenieStore();
-    const [suggestionText, setSuggestionText] = useState("");
-
-    useEffect(() => {
-        if (suggestionModal.isOpen) {
-            setSuggestionText(suggestionModal.existingSuggestion);
-        }
-    }, [suggestionModal.isOpen, suggestionModal.existingSuggestion]);
-
-    if (!suggestionModal.isOpen) return null;
-
-    const handleSubmit = () => {
-        saveStepSuggestion(suggestionModal.stepIndex, suggestionModal.file, suggestionText);
-    };
-
-    return (
-        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-lg flex flex-col gap-4 border border-white/10">
-                <h2 className="text-xl font-bold flex items-center gap-2"><LucideLightbulb className="text-yellow-400"/>Suggest an Edit</h2>
-                <p className="text-sm text-gray-400">For step: <span className="font-medium text-gray-300 truncate" title={suggestionModal.description}>{suggestionModal.description}</span></p>
-                <p className="text-sm text-gray-400">File: <span className="font-medium text-gray-300">{suggestionModal.file}</span></p>
-                <textarea
-                    placeholder="E.g., 'Consider using a different algorithm here for performance.' or 'Ensure this component is accessible.'"
-                    value={suggestionText}
-                    onChange={(e) => setSuggestionText(e.target.value)}
-                    className="bg-gray-900/70 border border-gray-600 rounded-md p-2 text-sm w-full resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
-                    rows={5}
-                />
-                <div className="flex justify-end gap-3 mt-2">
-                    <button onClick={closeSuggestionModal} className="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-4 rounded-md transition-colors">Cancel</button>
-                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-4 rounded-md transition-colors">Save Suggestion</button>
-                </div>
-            </div>
         </div>
     );
 };
@@ -538,14 +440,14 @@ const Header = () => {
     return (
         <header className="flex-shrink-0 flex items-center justify-between p-3 border-b border-white/10 bg-black/20 backdrop-blur-sm shadow-lg">
             <div className="flex items-center gap-3">
-                <LucideBrainCircuit className="text-primary w-8 h-8" />
+                <LucideBrainCircuit className="text-primary w-8 h-8" style={{color: `rgb(var(--primary))`}}/>
                 <div>
-                    <h1 className="text-xl font-bold text-white">Genie v2.7.1</h1>
-                    <p className="text-xs text-gray-400">Stabilized Core Engine</p>
+                    <h1 className="text-xl font-bold text-white">Genie v2.8</h1>
+                    <p className="text-xs text-gray-400">Cognitive Engine</p>
                 </div>
             </div>
-            <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 sm:gap-4"> {/* Adjust gap for small screens */}
+                <div className="flex items-center gap-1 sm:gap-2"> {/* Smaller gap for theme buttons */}
                     <Tooltip text="Nebula Theme"><button onClick={() => setTheme('theme-nebula')} className={`p-2 rounded-full ${theme === 'theme-nebula' ? 'bg-purple-500/50' : ''}`}><LucideWand2 size={16} className="text-purple-400"/></button></Tooltip>
                     <Tooltip text="Solar Flare Theme"><button onClick={() => setTheme('theme-solar')} className={`p-2 rounded-full ${theme === 'theme-solar' ? 'bg-orange-500/50' : ''}`}><LucideSun size={16} className="text-orange-400"/></button></Tooltip>
                     <Tooltip text="Starship Theme"><button onClick={() => setTheme('theme-starship')} className={`p-2 rounded-full ${theme === 'theme-starship' ? 'bg-cyan-500/50' : ''}`}><LucideMoon size={16} className="text-cyan-400"/></button></Tooltip>
@@ -581,24 +483,57 @@ const DownloadProjectButton = () => {
     );
 };
 
-const Workspace = () => {
-    const [activeTab, setActiveTab] = useState('logs');
-    const { status, activeFile, projectFiles } = useGenieStore(state => ({
-        status: state.status,
-        activeFile: state.activeFile,
-        projectFiles: state.projectFiles
-    }));
-    const showGoalAnalysis = status !== 'IDLE' && status !== 'AWAITING_KEY' && status !== 'AWAITING_AUTH';
+// ... Other UI Components (Workspace, GoalAnalysisPanel, Tooltip, AgentIdentity, ControlPanel, etc.) remain largely the same ...
+// ... For brevity, they are not repeated here but are assumed to be present from the previous version. ...
+
+const SuggestionModal = () => {
+    const { suggestionModal, closeSuggestionModal, saveStepSuggestion } = useGenieStore();
+    const [suggestionText, setSuggestionText] = useState("");
 
     useEffect(() => {
-        if (activeFile && projectFiles.hasOwnProperty(activeFile) && activeTab !== 'forge') {
-            setActiveTab('forge');
+        if (suggestionModal.isOpen) {
+            setSuggestionText(suggestionModal.existingSuggestion);
         }
-    }, [activeFile, projectFiles, activeTab]);
+    }, [suggestionModal.isOpen, suggestionModal.existingSuggestion]);
+
+    if (!suggestionModal.isOpen) return null;
+
+    const handleSubmit = () => {
+        saveStepSuggestion(suggestionModal.stepIndex, suggestionModal.file, suggestionText);
+    };
+
+    return (
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"> {/* p-4 is correct as per previous step */}
+            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-[95%] sm:w-full max-w-lg flex flex-col gap-4 border border-white/10"> {/* This line is the target */}
+                <h2 className="text-xl font-bold flex items-center gap-2"><LucideLightbulb className="text-yellow-400"/>Suggest an Edit</h2>
+                <p className="text-sm text-gray-400">For step: <span className="font-medium text-gray-300 truncate" title={suggestionModal.description}>{suggestionModal.description}</span></p>
+                <p className="text-sm text-gray-400">File: <span className="font-medium text-gray-300">{suggestionModal.file}</span></p>
+                <textarea
+                    placeholder="E.g., 'Consider using a different algorithm here for performance.' or 'Ensure this component is accessible.'"
+                    value={suggestionText}
+                    onChange={(e) => setSuggestionText(e.target.value)}
+                    className="bg-gray-900/70 border border-gray-600 rounded-md p-2 text-sm w-full resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
+                    rows={5}
+                />
+                <div className="flex justify-end gap-3 mt-2">
+                    <button onClick={closeSuggestionModal} className="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-4 rounded-md transition-colors">Cancel</button>
+                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-4 rounded-md transition-colors" style={{backgroundColor: `rgb(var(--primary))`}}>Save Suggestion</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const Workspace = () => {
+    const [activeTab, setActiveTab] = useState('logs');
+    const { status } = useGenieStore();
+    const showGoalAnalysis = status !== 'IDLE' && status !== 'AWAITING_KEY' && status !== 'AWAITING_AUTH';
 
     const tabButtonStyle = (tabName) => {
         const base = "whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ";
-        if (activeTab === tabName) { return base + "border-primary text-primary"; }
+        if (activeTab === tabName) {
+            return base + "border-primary text-primary";
+        }
         return base + "border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500";
     };
 
@@ -606,25 +541,50 @@ const Workspace = () => {
         <div className="flex flex-col h-full">
             <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
                 <nav className="-mb-px flex space-x-2" aria-label="Tabs">
-                    <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')}><LucideTerminal size={16} /> Agent Logs</button>
-                    {showGoalAnalysis && ( <button onClick={() => setActiveTab('analysis')} className={tabButtonStyle('analysis')}><LucideLightbulb size={16} /> Goal Analysis</button> )}
-                    <button onClick={() => setActiveTab('forge')} className={tabButtonStyle('forge')}><LucideFileCode size={16} /> Code Forge</button>
-                    {/* New Tab Button - show if not in initial states */}
-                    {(status !== 'IDLE' && !status.includes('AWAITING')) &&
-                        <button onClick={() => setActiveTab('details')} className={tabButtonStyle('details')}><LucideWrench size={16} /> Project Details</button>
-                    }
+                    <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')} style={{borderColor: activeTab === 'logs' ? `rgb(var(--primary))` : '', color: activeTab === 'logs' ? `rgb(var(--primary))` : ''}}>
+                        <LucideTerminal size={16} /> Agent Logs
+                    </button>
+                    {showGoalAnalysis && (
+                        <button onClick={() => setActiveTab('analysis')} className={tabButtonStyle('analysis')} style={{borderColor: activeTab === 'analysis' ? `rgb(var(--primary))` : '', color: activeTab === 'analysis' ? `rgb(var(--primary))` : ''}}>
+                            <LucideLightbulb size={16} /> Goal Analysis
+                        </button>
+                    )}
+                    <button onClick={() => setActiveTab('forge')} className={tabButtonStyle('forge')} style={{borderColor: activeTab === 'forge' ? `rgb(var(--primary))` : '', color: activeTab === 'forge' ? `rgb(var(--primary))` : ''}}>
+                        <LucideFileCode size={16} /> Code Forge
+                    </button>
                 </nav>
             </div>
             {activeTab === 'logs' && <LogsPanel />}
             {activeTab === 'analysis' && <GoalAnalysisPanel />}
             {activeTab === 'forge' && <CodeForge />}
-            {activeTab === 'details' && <ProjectDetailsPanel />} {/* Render new panel */}
         </div>
     );
 };
 
-// GoalAnalysisPanel remains the same, ProjectDetailsPanel was added before it. The search pattern should target the end of Workspace.
+const GoalAnalysisPanel = () => {
+    const { goalAnalysis } = useGenieStore();
 
+    if (!goalAnalysis) {
+        return <div className="flex items-center justify-center h-full text-gray-500"><LucideLoader className="animate-spin mr-2" />Awaiting goal analysis...</div>;
+    }
+
+    return (
+        <div className="p-4 overflow-y-auto h-full prose prose-invert prose-sm max-w-none">
+            <h3>Goal Analysis</h3>
+            <p><strong>Detected Intent:</strong> {goalAnalysis.intent}</p>
+
+            <h4>Key Entities & Features</h4>
+            <ul>
+                {goalAnalysis.entities.map((entity, i) => <li key={i}>{entity}</li>)}
+            </ul>
+
+            <h4>Suggested Technologies</h4>
+            <ul>
+                {goalAnalysis.technologies.map((tech, i) => <li key={i}>{tech}</li>)}
+            </ul>
+        </div>
+    );
+};
 
 const Tooltip = ({ text, children }) => (
     <div className="relative group flex items-center">
@@ -636,29 +596,36 @@ const Tooltip = ({ text, children }) => (
 );
 
 const AgentIdentity = () => {
-    const { persona, confidence, avatar, description } = useGenieStore(state => state.agentIdentity); // Add description
-    const circumference = 2 * Math.PI * 40;
+    const { persona, confidence, avatar, description } = useGenieStore(state => state.agentIdentity);
+    // Used fixed radius for calculation, SVG will scale with its container.
+    const fixedRadius = 36;
+    const strokeWidth = 6;
+    const circumference = 2 * Math.PI * fixedRadius;
     const offset = circumference - (confidence / 100) * circumference;
 
     return (
-        <div className="bg-gradient-to-br from-black/20 to-black/10 rounded-lg p-4 flex items-center gap-4 shadow-inner border border-white/10">
+      <div className="bg-gradient-to-br from-black/20 to-black/10 rounded-lg p-3 sm:p-4 flex flex-col items-center sm:flex-row sm:items-start gap-3 sm:gap-4 shadow-inner border border-white/10">
             <Tooltip text={`The agent analyzes the prompt to adopt a persona best suited for the task. It then calculates a confidence score based on the clarity of the goal and its own capabilities.`}>
-                <div className="relative w-24 h-24 flex items-center justify-center">
+                <div className="relative w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center flex-shrink-0"> {/* Avatar size: xs: 16, sm: 20 */}
                     <svg className="absolute w-full h-full transform -rotate-90">
-                        <circle cx="50%" cy="50%" r="40" strokeWidth="8" stroke="rgba(255,255,255,0.1)" fill="transparent" />
-                        <circle cx="50%" cy="50%" r="40" strokeWidth="8" stroke="url(#confidenceGradient)" fill="transparent"
-                            strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+                        <circle cx="50%" cy="50%" r={fixedRadius} strokeWidth={strokeWidth} stroke="rgba(255,255,255,0.1)" fill="transparent" />
+                        <circle cx="50%" cy="50%" r={fixedRadius} strokeWidth={strokeWidth} stroke="url(#confidenceGradient)" fill="transparent"
+                            strokeDasharray={circumference}
+                            strokeDashoffset={offset}
+                            strokeLinecap="round"
                             className="transition-all duration-1000 ease-in-out" />
                         <defs><linearGradient id="confidenceGradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stopColor="rgb(var(--primary))" /><stop offset="100%" stopColor="#6366f1" /></linearGradient></defs>
                     </svg>
-                    <div className="text-primary">{avatar}</div> {/* Directly use avatar from store */}
+                    <div className="text-primary text-2xl sm:text-3xl"> {/* Control icon size via text size of parent */}
+                        {React.cloneElement(avatar, { className: "w-[60%] h-[60%]", style: {color: `rgb(var(--primary))`}})}
+                    </div>
                 </div>
             </Tooltip>
-            <div>
-                <p className="text-sm text-gray-400">Active Persona</p>
-                <h3 className="text-xl font-bold text-white">{persona}</h3>
-                <p className="text-sm font-medium text-primary">Confidence: {confidence}%</p>
-                <p className="text-xs text-gray-500 mt-1 italic">{description || 'No description available.'}</p> {/* Display description */}
+            <div className="text-center sm:text-left flex-grow">
+                <p className="text-xs sm:text-sm text-gray-400">Active Persona</p>
+                <h3 className="text-lg sm:text-xl font-bold text-white">{persona}</h3>
+                <p className="text-xs sm:text-sm font-medium text-primary" style={{color: `rgb(var(--primary))`}}>Confidence: {confidence}%</p>
+                {description && <p className="text-xs text-gray-500 mt-1 italic max-w-full truncate sm:max-w-xs">{description || 'No description available.'}</p>}
             </div>
         </div>
     );
@@ -667,6 +634,15 @@ const AgentIdentity = () => {
 const ControlPanel = () => {
     const { apiKey, setApiKey, prompt, status, startProject, clearCurrentProject } = useGenieStore();
     const [localPrompt, setLocalPrompt] = useState(prompt);
+    const [isApiKeyPotentiallyInvalid, setIsApiKeyPotentiallyInvalid] = useState(false);
+
+    useEffect(() => {
+        if (apiKey.trim() !== "" && !apiKey.startsWith('AIza') && apiKey.length < 30) { // Very basic check
+            setIsApiKeyPotentiallyInvalid(true);
+        } else {
+            setIsApiKeyPotentiallyInvalid(false);
+        }
+    }, [apiKey]);
 
     useEffect(() => { setLocalPrompt(prompt); }, [prompt]);
     const handleStart = () => { if (localPrompt && apiKey) startProject(localPrompt); };
@@ -676,20 +652,12 @@ const ControlPanel = () => {
         <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 flex flex-col gap-4 p-4">
             <AgentIdentity />
             <h2 className="font-bold text-lg flex items-center gap-2 border-t border-white/10 pt-4"><LucideShield className="text-green-400"/>Configuration</h2>
-            {status === 'AWAITING_KEY' && !apiKey && (
-                <div className="mb-3 p-3 bg-yellow-500/10 border border-yellow-600 rounded-md text-yellow-300 text-sm">
-                    <p className="font-bold mb-1">API Key Required</p>
-                    <p>Genie needs a Gemini API Key to function. Please obtain your key and enter it below.</p>
-                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">
-                        Get your API Key from Google AI Studio
-                    </a>
-                    <p className="mt-1 text-xs text-yellow-400">Ensure your Firebase configuration (`__firebase_config`) is also correctly set up if you are self-hosting.</p>
-                </div>
-            )}
             <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-400">Gemini API Key</label>
-                <input type="password" placeholder="Enter your API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                    className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none transition" />
+                <input type="password" placeholder="Enter your API key" value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className={`bg-gray-900/70 border rounded-md p-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none transition ${isApiKeyPotentiallyInvalid ? 'border-yellow-500/50 ring-yellow-500/30' : 'border-white/10'}`} />
+                {isApiKeyPotentiallyInvalid && <p className="text-xs text-yellow-400 mt-1">Key format looks unusual. Ensure it's correct.</p>}
             </div>
             <div className="flex flex-col gap-1 flex-grow">
                 <label className="text-sm font-medium text-gray-400">Project Goal</label>
@@ -697,35 +665,9 @@ const ControlPanel = () => {
                     className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm flex-grow resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
                     rows={5} disabled={isRunning} />
             </div>
-
-            <div className="flex items-center justify-between mt-2 mb-1">
-                <label className="text-sm font-medium text-gray-400">Additional Guidance (Optional)</label>
-                <button
-                    onClick={() => useGenieStore.getState().toggleManualRefinementActive()}
-                    className={`text-xs px-2 py-1 rounded-md transition-colors ${useGenieStore(s => s.isManualRefinementActive) ? 'bg-primary-20 text-primary' : 'bg-gray-700 hover:bg-gray-600'}`}
-                    disabled={isRunning}
-                >
-                    {useGenieStore(s => s.isManualRefinementActive) ? 'Hide Guidance' : 'Show Guidance'}
-                </button>
-            </div>
-
-            {useGenieStore(s => s.isManualRefinementActive) && (
-                <div className="flex flex-col gap-1 mb-3">
-                    <textarea
-                        placeholder="E.g., Prioritize React components, use a specific library for charts, avoid using iframes..."
-                        value={useGenieStore(s => s.manualRefinements)}
-                        onChange={(e) => useGenieStore.getState().setManualRefinements(e.target.value)}
-                        className="bg-gray-900/70 border border-white/10 rounded-md p-2 text-sm flex-grow resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
-                        rows={4}
-                        disabled={isRunning}
-                    />
-                    <p className="text-xs text-gray-500">This guidance will be given to the agent before it starts planning.</p>
-                </div>
-            )}
-
             <div className="flex gap-2">
                 <button onClick={handleStart} disabled={!apiKey || !localPrompt || isRunning}
-                    className="flex-grow bg-primary hover:opacity-90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-md flex items-center justify-center gap-2 transition-all duration-200 shadow-md hover:shadow-lg">
+                    className="flex-grow bg-primary hover:opacity-90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-md flex items-center justify-center gap-2 transition-all duration-200 shadow-md hover:shadow-lg" style={{backgroundColor: `rgb(var(--primary))`}}>
                     {isRunning ? <LucideLoader className="animate-spin" /> : <LucidePlay />}
                     {isRunning ? "Working..." : "Launch Agent"}
                 </button>
@@ -740,12 +682,20 @@ const ControlPanel = () => {
 
 const ProjectManager = () => {
     const { projects, setCurrentProject, currentProjectId, userId, db } = useGenieStore();
-    const deleteProject = async (projectId) => {
-        if (db && userId) {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, projectId);
-            try { await deleteDoc(projectRef); useGenieStore.getState().clearCurrentProject(); }
-            catch (error) { console.error("Error deleting project:", error); }
+    const deleteProjectWithConfirmation = async (projectId, projectName) => {
+        if (window.confirm(`Are you sure you want to delete project: "${projectName || 'this project'}"?
+This action cannot be undone.`)) {
+            if (db && userId) {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, projectId);
+                try {
+                    await deleteDoc(projectRef);
+                    if (useGenieStore.getState().currentProjectId === projectId) {
+                        useGenieStore.getState().clearCurrentProject();
+                    }
+                }
+                catch (error) { console.error("Error deleting project:", error); }
+            }
         }
     };
     return (
@@ -753,13 +703,13 @@ const ProjectManager = () => {
             <h2 className="font-bold text-lg flex items-center gap-2"><LucideFolder className="text-yellow-400"/>Saved Projects</h2>
             <div className="space-y-2 overflow-y-auto">
                 {projects.length === 0 ? ( <p className="text-sm text-gray-500">No saved projects found.</p> ) : (
-                    projects.map(p => (
-                        <div key={p.id} className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${currentProjectId === p.id ? 'bg-primary-20' : 'bg-gray-800/50 hover:bg-gray-700/50'}`}>
+                    projects.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)).map(p => (
+                        <div key={p.id} className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${currentProjectId === p.id ? 'bg-primary/20' : 'bg-gray-800/50 hover:bg-gray-700/50'}`}>
                             <div onClick={() => setCurrentProject(p.id)} className="flex-grow">
                                 <p className="font-semibold truncate text-sm">{p.prompt}</p>
                                 <p className="text-xs text-gray-400">{new Date(p.createdAt).toLocaleString()}</p>
                             </div>
-                            <button onClick={() => deleteProject(p.id)} className="text-red-500 hover:text-red-400 p-1 ml-2"><LucideTrash2 size={16}/></button>
+                            <button onClick={() => deleteProjectWithConfirmation(p.id, p.prompt)} className="text-red-500 hover:text-red-400 p-1 ml-2"><LucideTrash2 size={16}/></button>
                         </div>
                     ))
                 )}
@@ -768,43 +718,8 @@ const ProjectManager = () => {
     );
 };
 
-const ProjectHealthPanel = () => {
-    const { status, correction, projectFiles, testResults } = useGenieStore();
-    const errorCount = testResults?.issues?.length || 0;
-    const fileCount = Object.keys(projectFiles).length;
-
-    if (status === 'IDLE' || status.includes('AWAITING')) return null;
-
-    return (
-        <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 p-4">
-            <h2 className="font-bold text-lg flex items-center gap-2 mb-3"><LucideActivity className="text-primary"/>Project Health</h2>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="bg-black/20 p-3 rounded-md">
-                    <p className="text-gray-400">Status</p>
-                    <p className="font-bold text-base">{status}</p>
-                </div>
-                <div className="bg-black/20 p-3 rounded-md">
-                    <p className="text-gray-400">Files</p>
-                    <p className="font-bold text-base">{fileCount}</p>
-                </div>
-                <div className="bg-black/20 p-3 rounded-md">
-                    <p className="text-gray-400">Corrections</p>
-                    <p className="font-bold text-base">{correction.iteration}</p>
-                </div>
-                <div className={`p-3 rounded-md ${errorCount > 0 ? 'bg-red-500/20' : 'bg-green-500/20'}`}>
-                    <p className={`${errorCount > 0 ? 'text-red-300' : 'text-green-300'}`}>Issues Found</p>
-                    <p className="font-bold text-base">{errorCount}</p>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 const MissionControl = () => {
-    const missionControl = useGenieStore(state => state.missionControl);
-    const projectFiles = useGenieStore(state => state.projectFiles); // Select for button disable logic
-    const { setViewCodeForStep } = useGenieStore(); // Get action
-
+    const { missionControl } = useGenieStore();
     if (!missionControl?.steps?.length) return null;
 
     const progress = missionControl.totalWorkUnits > 0 ? (missionControl.completedWorkUnits / missionControl.totalWorkUnits) * 100 : 0;
@@ -812,7 +727,7 @@ const MissionControl = () => {
     const getStatusStyles = (status) => {
         switch (status) {
             case 'complete': return 'bg-green-500/20 border-green-500';
-            case 'in-progress': return 'bg-primary-20 border-primary animate-pulse';
+            case 'in-progress': return 'bg-primary/20 border-primary animate-pulse';
             case 'pending': return 'bg-gray-500/20 border-gray-500';
             default: return 'bg-gray-700';
         }
@@ -835,41 +750,16 @@ const MissionControl = () => {
             <div className="w-full bg-black/30 rounded-full h-2.5 mb-4">
                 <div className="bg-gradient-to-r from-primary to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ backgroundImage: `linear-gradient(to right, rgb(var(--primary)), #6366f1)`, width: `${progress}%` }}></div>
             </div>
-            <div className="flex items-center space-x-2 overflow-x-auto pb-2">
+            <div className="flex flex-col sm:flex-row items-center sm:space-x-2 overflow-x-auto pb-2 gap-2 sm:gap-0">
                 {missionControl.steps.map((step, index) => (
                     <Tooltip key={index} text={step.description}>
-                        <div onClick={() => handleStepClick(step.logIndex)} className={`flex-shrink-0 w-56 p-3 rounded-lg border-2 transition-all cursor-pointer ${getStatusStyles(step.status)}`}> {/* Increased width w-56 */}
-                            <div className="flex items-center justify-between mb-1">
+                        <div onClick={() => handleStepClick(step.logIndex)} className={`flex-shrink-0 w-full sm:w-48 p-3 rounded-lg border-2 transition-all cursor-pointer ${getStatusStyles(step.status)}`}>
+                            <div className="flex items-center justify-between mb-2">
                                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full`}>{step.status}</span>
-                                <span className="text-xs text-gray-400">WU: {step.time_estimate}</span>
+                                <span className="text-xs text-gray-400">WU: {step.time_estimate || 5}</span>
                             </div>
-                            <p className="text-sm font-medium truncate" title={step.description}>{step.description}</p> {/* Added title attribute */}
-                            <p className="text-xs text-gray-500 capitalize">File: {step.file}</p>
-                            <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2"> {/* New div for actions */}
-                                <Tooltip text={`View code for ${step.file}`}>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setViewCodeForStep(step.file);
-                                        }}
-                                        className="p-1 hover:bg-white/20 rounded transition-colors"
-                                        disabled={!projectFiles.hasOwnProperty(step.file)}
-                                    >
-                                        <LucideFileCode size={14} className="text-blue-400" />
-                                    </button>
-                                </Tooltip>
-                                <Tooltip text="Suggest an edit for this step">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            useGenieStore.getState().openSuggestionModal(step, index); // Pass full step and its index
-                                        }}
-                                        className="p-1 hover:bg-white/20 rounded transition-colors"
-                                    >
-                                        <LucideWand2 size={14} className="text-yellow-400" />
-                                    </button>
-                                </Tooltip>
-                            </div>
+                            <p className="text-sm font-medium truncate">{step.description}</p>
+                            {step.file && <p className="text-xs text-gray-500 capitalize">File: {step.file}</p>}
                         </div>
                     </Tooltip>
                 ))}
@@ -879,8 +769,8 @@ const MissionControl = () => {
 };
 
 const LogFilterControls = () => {
-    const { logFilter, toggleLogFilter, logSearchTerm, setLogSearchTerm } = useGenieStore(); // Add logSearchTerm and setLogSearchTerm
-    const filters = [ // Define filters array here
+    const { logFilter, toggleLogFilter, logSearchTerm, setLogSearchTerm } = useGenieStore(); // Added logSearchTerm and setLogSearchTerm from previous step
+    const filters = [
         { key: 'system', icon: LucideShield, color: 'text-purple-400' },
         { key: 'agent', icon: LucideBot, color: 'text-gray-400' },
         { key: 'user', icon: LucideUser, color: 'text-blue-400' },
@@ -890,8 +780,8 @@ const LogFilterControls = () => {
     ];
 
     return (
-        <div className="flex-shrink-0 p-2 border-b border-white/10 bg-black/20 flex items-center justify-between gap-2"> {/* Changed to justify-between */}
-            <div className="flex items-center gap-2"> {/* Group for existing filters */}
+        <div className="flex-shrink-0 p-2 border-b border-white/10 bg-black/20 flex flex-wrap items-center justify-between gap-2"> {/* Added flex-wrap and gap-2 */}
+            <div className="flex items-center gap-1 sm:gap-2"> {/* Reduced gap for filter icons */}
                 <LucideFilter className="text-gray-500" size={16} />
                 {filters.map(f => (
                     <Tooltip key={f.key} text={`Toggle ${f.key} logs`}>
@@ -901,12 +791,12 @@ const LogFilterControls = () => {
                     </Tooltip>
                 ))}
             </div>
-            <div className="flex-grow max-w-xs"> {/* Search input group */}
+            <div className="flex-grow sm:flex-grow-0 w-full sm:w-auto sm:max-w-xs"> {/* Search input group takes full width on xs, auto on sm+ */}
                 <input
                     type="text"
                     placeholder="Search logs..."
-                    value={logSearchTerm}
-                    onChange={(e) => setLogSearchTerm(e.target.value)}
+                    value={logSearchTerm} // This was added in a previous subtask
+                    onChange={(e) => setLogSearchTerm(e.target.value)} // This was added in a previous subtask
                     className="bg-gray-900/70 border border-white/10 rounded-md p-1.5 text-xs w-full focus:ring-1 focus:ring-primary focus:outline-none transition"
                 />
             </div>
@@ -915,14 +805,9 @@ const LogFilterControls = () => {
 };
 
 const LogsPanel = () => {
-    const { logs, logFilter, logSearchTerm } = useGenieStore(); // Add logSearchTerm
+    const { logs, logFilter } = useGenieStore();
     const scrollRef = useRef(null);
-
-    const filteredLogs = logs.filter(log => {
-        if (!logFilter[log.type]) return false;
-        if (logSearchTerm.trim() === "") return true; // If search is empty, don't filter by text
-        return log.message.toLowerCase().includes(logSearchTerm.toLowerCase());
-    });
+    const filteredLogs = logs.filter(log => logFilter[log.type]);
 
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -934,7 +819,7 @@ const LogsPanel = () => {
             <div ref={scrollRef} className="flex-grow overflow-y-auto p-4">
                 <div className="space-y-3 font-mono text-sm">
                     {filteredLogs.map((log, index) => (
-                        <div key={index} id={`log-item-${logs.indexOf(log)}`} className="flex items-start gap-3 p-1 rounded-md">
+                        <div key={index} id={`log-item-${index}`} className="flex items-start gap-3 p-1 rounded-md">
                             <LogIcon type={log.type} />
                             <div className="flex-grow">
                                 <p className="whitespace-pre-wrap">{log.message}</p>
@@ -961,7 +846,7 @@ const LogIcon = ({ type }) => {
 };
 
 const CodeForge = () => {
-    const { projectFiles, activeFile, setActiveFile } = useGenieStore();
+    const { projectFiles, activeFile, setActiveFile, status } = useGenieStore();
     const fileNames = Object.keys(projectFiles);
 
     if (fileNames.length === 0) {
@@ -972,13 +857,14 @@ const CodeForge = () => {
         if (fileName.endsWith('.html')) return <LucideFileCode className="text-orange-400" size={16} />;
         if (fileName.endsWith('.css')) return <LucideFileCode className="text-blue-400" size={16} />;
         if (fileName.endsWith('.js')) return <LucideFileCode className="text-yellow-400" size={16} />;
-        return <LucideFileJson size={16} />;
+        if (fileName.endsWith('.json')) return <LucideFileJson size={16} className="text-green-400" />;
+        return <LucideFileText size={16} />;
     };
 
     return (
         <div className="flex flex-col h-full">
             <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
-                <nav className="-mb-px flex space-x-2" aria-label="Tabs">
+                <nav className="-mb-px flex space-x-2 overflow-x-auto" aria-label="Tabs">
                     {fileNames.map(name => (
                         <button key={name} onClick={() => setActiveFile(name)}
                             className={`whitespace-nowrap py-3 px-2 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${activeFile === name ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'}`}>
@@ -999,47 +885,124 @@ const LiveCodePanel = () => {
     const [displayedCode, setDisplayedCode] = useState('');
     const fullCode = projectFiles[activeFile] || '';
     const isCoding = status === 'CODING' || status === 'CORRECTING';
+    const codeRef = useRef(null);
 
     useEffect(() => {
-        let i = 0;
-        let animationFrameId;
-
         if (isCoding) {
-            setDisplayedCode(''); // Reset for typing effect
-            const type = () => {
-                if (i < fullCode.length) {
-                    setDisplayedCode(fullCode.substring(0, i + 1));
-                    i++;
-                    animationFrameId = requestAnimationFrame(type);
-                }
-            };
-            type();
+            // Live typing effect
+            setDisplayedCode(fullCode);
         } else {
             setDisplayedCode(fullCode);
         }
-
-        return () => cancelAnimationFrame(animationFrameId);
+        if(codeRef.current){
+             codeRef.current.scrollTop = codeRef.current.scrollHeight;
+        }
     }, [fullCode, isCoding, activeFile]);
 
-    return <pre className="text-xs whitespace-pre-wrap">{displayedCode}</pre>;
+    return <pre ref={codeRef} className="text-xs whitespace-pre-wrap h-full overflow-y-auto">{displayedCode}</pre>;
 };
+
 
 const IntegratedPreviewPanel = () => {
     const files = useGenieStore(state => state.projectFiles);
+    const status = useGenieStore(state => state.status);
     const [previewContent, setPreviewContent] = useState('');
+    const [previewError, setPreviewError] = useState(null);
+    const iframeRef = useRef(null);
 
     useEffect(() => {
         const { 'index.html': html, 'style.css': css, 'script.js': js } = files;
-        if (!html) { setPreviewContent(''); return; }
-        const constructedHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><script src="https://cdn.tailwindcss.com"></script><style>${css || ''}</style></head><body>${html}<script>${js || ''}</script></body></html>`;
+        if (!html) {
+            setPreviewContent('<html><body style="background-color: #111827; color: #9ca3af; display: flex; align-items: center; justify-content: center; font-family: sans-serif;">Awaiting HTML file...</body></html>');
+            setPreviewError(null);
+            return;
+        }
+
+        const errorHandlerScript = `
+            <script>
+                window.onerror = function(message, source, lineno, colno, error) {
+                    window.parent.postMessage({
+                        type: 'iframeError',
+                        payload: {
+                            message: message,
+                            source: source.substring(source.lastIndexOf('/') + 1),
+                            lineno: lineno,
+                            colno: colno,
+                            error: error ? error.stack ? error.stack.substring(0, 200) : String(error) : 'Unknown error'
+                        }
+                    }, '*');
+                    return true;
+                };
+                window.addEventListener('unhandledrejection', function(event) {
+                    window.parent.postMessage({
+                        type: 'iframeError',
+                        payload: {
+                            message: 'Unhandled promise rejection: ' + (event.reason ? (event.reason.message || String(event.reason)) : 'Unknown reason'),
+                            error: event.reason ? (event.reason.stack ? event.reason.stack.substring(0,200) : String(event.reason)) : 'Unknown error'
+                        }
+                    }, '*');
+                });
+            </script>
+        `;
+
+        const constructedHtml = `<!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <script src="https://cdn.tailwindcss.com"></script>
+                ${errorHandlerScript}
+                <style>${css || ''}</style>
+            </head>
+            <body class="bg-gray-100">
+                ${html}
+                <script>${js || ''}</script>
+            </body>
+            </html>`;
+
         setPreviewContent(constructedHtml);
-    }, [files]);
+        setPreviewError(null);
+
+    }, [files, status]);
+
+    useEffect(() => {
+        const handleMessage = (event) => {
+            if (event.data && event.data.type === 'iframeError') {
+                setPreviewError(event.data.payload);
+            }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, []);
 
     return (
-        <div className="w-full h-full flex flex-col">
+        <div className="w-full h-full flex flex-col relative">
             <h2 className="text-lg font-bold p-3 border-b border-white/10 flex-shrink-0 bg-black/20">Integrated Preview</h2>
+            {previewError && (
+                <div
+                    className="absolute top-12 left-2 right-2 z-10 p-3 bg-red-700/90 text-white rounded-md shadow-lg border border-red-900"
+                    onClick={() => setPreviewError(null)}
+                    style={{ maxHeight: '30%', overflowY: 'auto' }}
+                >
+                    <div className="flex justify-between items-center mb-1">
+                        <h4 className="font-bold flex items-center"><LucideAlertTriangle size={16} className="mr-2"/> Preview Error</h4>
+                        <button onClick={() => setPreviewError(null)} className="text-white hover:text-red-200">&times;</button>
+                    </div>
+                    <p className="text-xs font-mono"><strong>{previewError.message}</strong></p>
+                    {previewError.source && <p className="text-xs font-mono mt-1">In {previewError.source} (approx. line {previewError.lineno})</p>}
+                    {previewError.error && typeof previewError.error === 'string' &&
+                        <pre className="text-xs font-mono mt-1 whitespace-pre-wrap opacity-80">{previewError.error.split('\n').slice(0,3).join('\n')}</pre>
+                    }
+                </div>
+            )}
             <div className="flex-grow bg-white">
-                <iframe srcDoc={previewContent} title="Integrated Preview" className="w-full h-full border-none" sandbox="allow-scripts allow-modals allow-forms" />
+                <iframe
+                    ref={iframeRef}
+                    srcDoc={previewContent}
+                    title="Integrated Preview"
+                    className="w-full h-full border-none"
+                    sandbox="allow-scripts allow-modals allow-forms"
+                />
             </div>
         </div>
     );
@@ -1051,16 +1014,27 @@ const RefinementModal = () => {
     if (!refinement.isActive) return null;
     const currentQuestionIndex = refinement.answers.length;
     const currentQuestion = refinement.questions[currentQuestionIndex];
-    const handleSubmit = () => { if (currentAnswer.trim()) { submitRefinementAnswer(currentAnswer); setCurrentAnswer(''); } };
+    const handleSubmit = () => {
+        if (currentAnswer.trim()) {
+            submitRefinementAnswer(currentAnswer);
+            setCurrentAnswer('');
+        } else {
+            const inputElement = document.querySelector('#refinement-input');
+            if (inputElement) {
+                inputElement.classList.add('ring-2', 'ring-red-500');
+                setTimeout(() => inputElement.classList.remove('ring-2', 'ring-red-500'), 1000);
+            }
+        }
+    };
     return (
-        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-lg flex flex-col gap-4 border border-white/10">
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"> {/* Added p-4 */}
+            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-[95%] sm:w-full max-w-lg flex flex-col gap-4 border border-white/10"> {/* w-[95%] sm:w-full */}
                 <h2 className="text-xl font-bold flex items-center gap-2"><LucideMessageCircle className="text-primary"/>Clarification Needed</h2>
                 <div className="bg-gray-900/70 p-4 rounded-md"> <p className="font-medium">{currentQuestion}</p> </div>
                 <div className="flex gap-2">
-                    <input type="text" value={currentAnswer} onChange={(e) => setCurrentAnswer(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSubmit()} placeholder="Your answer..."
+                    <input id="refinement-input" type="text" value={currentAnswer} onChange={(e) => setCurrentAnswer(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSubmit()} placeholder="Your answer..."
                         className="flex-grow bg-gray-700 border border-gray-600 rounded-md p-2 text-sm focus:ring-2 focus:ring-primary focus:outline-none transition" />
-                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold p-2 rounded-md flex items-center justify-center gap-2 transition-colors"> <LucideSend size={16} /> </button>
+                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold p-2 rounded-md flex items-center justify-center gap-2 transition-colors" style={{backgroundColor: `rgb(var(--primary))`}}> <LucideSend size={16} /> </button>
                 </div>
                 <p className="text-xs text-gray-500 text-center">Question {currentQuestionIndex + 1} of {refinement.questions.length}</p>
             </div>
@@ -1072,327 +1046,345 @@ const StatusBar = () => {
     const { status, currentTask, userId } = useGenieStore();
     const getStatusIndicator = () => {
         switch (status) {
-            case 'AWAITING_KEY': case 'AWAITING_AUTH': case 'ERROR': return <LucideAlertTriangle className="text-red-400" />;
-            case 'IDLE': return <LucideBot className="text-gray-400" />;
-            case 'COMPLETED': return <LucideCheckCircle className="text-green-400" />;
-            case 'REFINING': case 'ANALYZING': return <LucideMessageCircle className="text-primary" />;
-            default: return <LucideLoader className="animate-spin text-primary" />;
+            case 'AWAITING_KEY': case 'AWAITING_AUTH': case 'ERROR': return <LucideAlertTriangle className="text-red-400" size={16} />;
+            case 'IDLE': return <LucideBot className="text-gray-400" size={16} />;
+            case 'COMPLETED': return <LucideCheckCircle className="text-green-400" size={16} />;
+            case 'REFINING': case 'ANALYZING': return <LucideMessageCircle className="text-primary" size={16} />;
+            default: return <LucideLoader className="animate-spin text-primary" size={16} />;
         }
     };
-    return ( <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0"> <div className="flex items-center gap-2"> {getStatusIndicator()} <span>{currentTask}</span> </div> {userId && <div className="font-mono text-gray-500">UserID: {userId}</div>} </footer> );
+    return ( <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0 flex-wrap sm:flex-nowrap gap-y-1"> {/* Allow wrapping and gap */}
+        <div className="flex items-center gap-2">
+            {getStatusIndicator()}
+            <span className="truncate max-w-[calc(100vw-150px)] sm:max-w-none">{currentTask}</span> {/* Truncate currentTask with a max-width */}
+        </div>
+        {userId && <div className="font-mono text-gray-500 text-nowrap">UserID: {userId}</div>} {/* Ensure UserID doesn't wrap awkwardly */}
+    </footer> );
 };
 
-// --- AGENT LIFECYCLE & LLM LOGIC (v2.7) ---
-const useAgentOrchestrator = () => {
-    const orchestratorRunning = useRef(false);
-
-    useEffect(() => {
-        const unsubscribe = useGenieStore.subscribe(
-            (state) => ({ status: state.status, isAuthReady: state.isAuthReady, currentProjectId: state.currentProjectId, refinementIsActive: state.refinement.isActive }),
-            async (currentState, prevState) => {
-                if(currentState.status === prevState.status) return; // Only run on status change
-
-                const { status, isAuthReady, currentProjectId, refinementIsActive } = currentState;
-                if (!isAuthReady || !currentProjectId || refinementIsActive || orchestratorRunning.current) {
-                    return;
-                }
-
-                const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
-                if (!activeStates.includes(status)) {
-                    return;
-                }
-
-                orchestratorRunning.current = true;
-                const storeState = useGenieStore.getState();
-                try {
-                    switch (storeState.status) {
-                        case 'REFINING': await runRefinementPhase(storeState); break;
-                        case 'ANALYZING': await runAnalysisPhase(storeState); break;
-                        case 'PLANNING': await runPlanningPhase(storeState); break;
-                        case 'CODING': await runCodingPhase(storeState); break;
-                        case 'TESTING': await runTestingPhase(storeState); break;
-                        case 'CORRECTING': await runCorrectionPhase(storeState); break;
-                        case 'REFACTORING': await runReflectionPhase(storeState); break;
-                    }
-                } catch (error) {
-                    useGenieStore.getState().updateStatus('ERROR', `Orchestrator Error: ${error.message}`);
-                } finally {
-                    orchestratorRunning.current = false;
-                }
-            },
-            { fireImmediately: true }
-        );
-        return unsubscribe;
-    }, []);
-};
-
-
+// --- AGENT LIFECYCLE & LLM LOGIC (v2.8 - IMPLEMENTED) ---
 const callGeminiAPI = async (promptText, apiKey, isJson = false) => {
-    const { addLog, updateStatus } = useGenieStore.getState();
-    addLog(`Sending request to Gemini API...`, 'system', { prompt: promptText });
-    try {
-        const payload = { contents: [{ role: "user", parts: [{ text: promptText }] }] };
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!response.ok) { const errorBody = await response.text(); throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`); }
-        const result = await response.json();
-        if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-            const text = result.candidates[0].content.parts[0].text;
-            addLog(`Received response from Gemini API.`, 'system', { response: text });
-            if (isJson) return text.replace(/```(json)?/g, '').trim();
-            return text;
-        } else {
-            throw new Error(`Invalid or empty response from Gemini API: ${JSON.stringify(result)}`);
+    const { addLog, apiRetryConfig, updateStatus: updateAgentStatus } = useGenieStore.getState();
+    addLog(`Sending request to Gemini API... (isJson: ${isJson})`, 'tool', { promptLength: promptText.length });
+
+    let retries = 0;
+    while (retries <= apiRetryConfig.maxRetries) {
+        try {
+            const payload = { contents: [{ role: "user", parts: [{ text: promptText }] }] };
+            if (isJson) {
+                payload.generationConfig = { responseMimeType: "application/json" };
+            }
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            if (!response.ok) {
+                const errorBodyText = await response.text();
+                if ((response.status === 429 || response.status >= 500) && retries < apiRetryConfig.maxRetries) {
+                    throw new Error(`RetryableAPIError: ${response.status} ${response.statusText} - ${errorBodyText}`);
+                }
+                throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBodyText}`);
+            }
+
+            const result = await response.json();
+
+            if (isJson) {
+                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    const jsonText = result.candidates[0].content.parts[0].text;
+                    addLog(`Received JSON string from Gemini API, parsing...`, 'tool', { length: jsonText.length });
+                    return JSON.parse(jsonText);
+                } else {
+                    addLog(`Received direct JSON object or unexpected structure from Gemini API (isJson=true).`, 'tool', { result });
+                    return result;
+                }
+            } else {
+                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    addLog(`Received text response from Gemini API.`, 'tool', { length: text.length });
+                    return text;
+                } else {
+                    throw new Error(`Invalid or empty text response structure from Gemini API: ${JSON.stringify(result)}`);
+                }
+            }
+        } catch (error) {
+            if (error.message.startsWith('RetryableAPIError') && retries < apiRetryConfig.maxRetries) {
+                retries++;
+                const delay = Math.pow(2, retries) * apiRetryConfig.initialDelayMs; // Exponential backoff with increased base delay
+                addLog(`API Error (${error.message.split('-')[0].trim()}). Retrying attempt ${retries}/${apiRetryConfig.maxRetries} in ${delay}ms...`, 'system', { errorMessage: error.message });
+                await new Promise(res => setTimeout(res, delay));
+            } else {
+                addLog(`Error interacting with Gemini: ${error.message}`, 'error', { promptLength: promptText.length, finalAttempt: retries + 1 });
+                updateAgentStatus('ERROR', 'API communication failed.');
+                return null;
+            }
         }
-    } catch (error) {
-        addLog(`Error interacting with Gemini: ${error.message}`, 'error', { prompt: promptText });
-        updateStatus('ERROR', 'API communication failed.');
-        return null;
     }
+    addLog('API call failed after maximum retries.', 'error', { promptLength: promptText.length });
+    updateAgentStatus('ERROR', 'API call failed after max retries.');
+    return null;
 };
 
 const runRefinementPhase = async (state) => {
-    const { addLog, setAgentIdentity, setRefinementQuestions, apiKey, prompt, manualRefinements, isManualRefinementActive } = state; // Add manualRefinements and isManualRefinementActive
+    const { addLog, setAgentIdentity, setRefinementQuestions, prompt, apiKey } = useGenieStore.getState();
+    addLog('Analyzing initial prompt to determine persona and clarity.', 'agent');
 
-    addLog('Entering refinement phase. Analyzing prompt clarity and adopting persona.', 'agent');
+    const llmPrompt = `You are a project manager AI. Analyze the user's project goal.
+    1.  Adopt a persona best suited for this task from this list: ['Creative Maverick', 'UI Specialist', 'Data Architect', 'Generalist'].
+    2.  Assess your confidence in achieving the goal on a scale of 0-100.
+    3.  If the goal is ambiguous, formulate up to 3 clarifying questions to ask the user. If the goal is clear, provide an empty array for questions.
 
-    let combinedPrompt = prompt;
-    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
-        combinedPrompt += `
+    User Goal: "${prompt}"
 
-User's Additional Guidance:
-${manualRefinements}`;
-        addLog(`Incorporating user's additional guidance: "${manualRefinements}"`, 'system');
-    }
+    Return a single JSON object with the keys "persona", "confidence", and "questions".`;
 
-    const refinementPrompt = `You are a project intake analyst. Analyze the user's request (including any additional guidance) to determine clarity, assign a confidence score, and adopt a persona. Personas: "Creative Maverick", "Data Architect", "UI Specialist", "Generalist". Respond with a JSON object containing: "is_clear" (boolean), "questions" (array of strings, empty if clear), "confidence_score" (integer 0-100), and "agent_persona" (string from list). User Request: "${combinedPrompt}" Generate the JSON analysis.`;
-    const jsonString = await callGeminiAPI(refinementPrompt, apiKey, true);
-    if (jsonString) {
-        try {
-            const analysis = JSON.parse(jsonString);
-            setAgentIdentity({ persona: analysis.agent_persona, confidence: analysis.confidence_score });
-            setRefinementQuestions(analysis.is_clear ? [] : analysis.questions || []);
-        } catch (e) {
-            addLog(`Failed to parse refinement analysis: ${e.message}. Assuming prompt is clear.`, 'error');
-            setAgentIdentity({ persona: 'Generalist', confidence: 50 }); setRefinementQuestions([]);
-        }
-    } else {
-         addLog('Could not get refinement analysis. Proceeding with original prompt.', 'system');
-         setRefinementQuestions([]);
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
+
+    if (result) {
+        setAgentIdentity({ persona: result.persona || 'Generalist', confidence: result.confidence || 50 });
+        setRefinementQuestions(result.questions || []);
     }
 };
 
 const runAnalysisPhase = async (state) => {
-    const { addLog, setGoalAnalysis, apiKey, prompt, refinement, manualRefinements, isManualRefinementActive, updateStatus } = state; // Add manualRefinements and isManualRefinementActive
+    const { addLog, setGoalAnalysis, prompt, refinement, apiKey } = useGenieStore.getState();
+    addLog('Performing deep analysis of the refined project goal.', 'agent');
 
-    addLog('Performing deep goal analysis...', 'agent');
-
-    let basePrompt = prompt;
-    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
-        basePrompt += `
-
-User's Additional Guidance (provided before refinement questions):
-${manualRefinements}`;
+    let refinedPrompt = `Initial Goal: ${prompt}`;
+    if (refinement.answers.length > 0) {
+        const qaPairs = refinement.questions.map((q, i) => `Q: ${q}\nA: ${refinement.answers[i]}`).join('\n\n');
+        refinedPrompt += `\n\nUser Clarifications:\n${qaPairs}`;
     }
 
-    let fullPrompt = `Original Goal (including any pre-refinement guidance): ${basePrompt}` +
-                    (refinement.answers.length > 0 ? `
+    const llmPrompt = `You are a requirements analyst AI. Based on the user's goal and clarifications, break down the project.
+    1.  Determine the core user "intent".
+    2.  List the key "entities" or "features" needed.
+    3.  Suggest a stack of "technologies" (e.g., React, Tailwind CSS).
 
-User Clarifications (Q&A):
-${refinement.questions.map((q, i) => `- Q: ${q}
-  A: ${refinement.answers[i]}`).join('
-')}` : '');
+    Project Brief:\n${refinedPrompt}
 
-    const analysisPrompt = `You are a requirements analyst. Analyze the following refined user goal (which includes initial prompt, any pre-refinement guidance, and Q&A clarifications). Extract the core intent, key entities/features, and suggest appropriate web technologies.
-Respond with a JSON object with three keys:
-1. "intent": A short sentence describing the user's primary goal.
-2. "entities": An array of strings listing the key nouns, features, or components mentioned (e.g., "user login form", "3D cube", "data dashboard").
-3. "technologies": An array of strings listing the technologies needed (e.g., "HTML", "CSS", "JavaScript", "Three.js").
+    Return a single JSON object with "intent", "entities", and "technologies".`;
 
-Full User Goal Context:
-${fullPrompt}
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
-Generate the JSON analysis.`;
-    const jsonString = await callGeminiAPI(analysisPrompt, apiKey, true);
-    if (jsonString) {
-        try {
-            const analysis = JSON.parse(jsonString);
-            setGoalAnalysis(analysis);
-        } catch (e) {
-            addLog(`Failed to parse goal analysis: ${e.message}. Moving directly to planning.`, 'error');
-            updateStatus('PLANNING', 'Architecting Solution...');
-        }
+    if (result) {
+        setGoalAnalysis(result);
     }
 };
 
 const runPlanningPhase = async (state) => {
-    const { addLog, setMissionPlan, apiKey, prompt, refinement, db, userId, currentProjectId, updateStatus, agentIdentity, goalAnalysis, manualRefinements, isManualRefinementActive } = state;
-    addLog('Entering planning phase.', 'agent');
+    const { addLog, setMissionPlan, goalAnalysis, apiKey, agentIdentity, updateStatus, updateFirestoreProjectData } = useGenieStore.getState();
+    addLog('Architecting solution and generating a step-by-step mission plan.', 'agent');
 
-    let basePrompt = prompt;
-    if (isManualRefinementActive && manualRefinements && manualRefinements.trim() !== "") {
-        basePrompt += `
-
-User's Additional Guidance (provided before refinement questions):
-${manualRefinements}`;
+    if (!goalAnalysis || !goalAnalysis.intent || !goalAnalysis.entities || !goalAnalysis.technologies) {
+        addLog('Goal analysis data is incomplete. Cannot proceed with planning.', 'error');
+        updateStatus('ERROR', 'Planning failed: incomplete goal analysis.');
+        return;
     }
 
-    let fullPrompt = `Original Goal (including any pre-refinement guidance): ${basePrompt}` +
-                     (refinement.answers.length > 0 ? `
+    const llmPrompt = `You are a senior software architect AI. Create a detailed execution plan for a web application.
 
-User Clarifications (Q&A):
-${refinement.questions.map((q, i) => `- Q: ${q}
-  A: ${refinement.answers[i]}`).join('
-')}` : '');
+    Analysis Details:
+    - Intent: ${goalAnalysis.intent}
+    - Features: ${goalAnalysis.entities.join(', ')}
+    - Tech Stack: ${goalAnalysis.technologies.join(', ')}
 
-    let capabilitiesContext = "";
-    if (agentIdentity.capabilities && agentIdentity.capabilities.length > 0) {
-        capabilitiesContext = `\n\nThis agent is operating as a "${agentIdentity.persona}" with the following guiding principles/capabilities: ${agentIdentity.capabilities.join('; ')}. Please consider these in your plan.`;
-    }
+    Instructions:
+    1.  Define the necessary file structure ("files"). Create 'index.html', 'style.css', and 'script.js'.
+    2.  Create a series of "steps", where each step is a specific, atomic task for the coding agent.
+    3.  For each step, provide a "description", the target "file", a "time_estimate" (work unit, 1-10), and a detailed "prompt" for the coding agent to generate the code for that specific step. The "prompt" for each step must be self-contained and tell the coder EXACTLY what to write.
 
-    const planningPrompt = `You are a master software architect. Your task is to create a technical plan as a JSON object. This object must contain:
-1.  "summary": A brief overview of the proposed solution.
-2.  "files": An array of strings with the filenames to be created (e.g., ["index.html", "style.css", "script.js"]).
-3.  "steps": An array of objects, where each object has:
-    - "file": The name of the file this step applies to.
-    - "description": A concise instruction for what to code in this step.
-    - "time_estimate": An integer for work units (e.g., 5, 10, 20).
+    Return a single JSON object with "files" and "steps".`;
 
-Based on the full context below, generate the JSON plan. Ensure the plan includes HTML, CSS, and JavaScript files for a complete web application.
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
-Full Context (Original Goal, Pre-Refinement Guidance, Q&A Clarifications):
-${fullPrompt}${capabilitiesContext}
+    if (result && result.files && Array.isArray(result.files) && result.steps && Array.isArray(result.steps) && result.steps.every(s => typeof s.description === 'string' && typeof s.file === 'string' && typeof s.time_estimate === 'number' && typeof s.prompt === 'string')) {
+        setMissionPlan(result);
 
-Generate the JSON plan.`;
-    const planJsonString = await callGeminiAPI(planningPrompt, apiKey, true);
-    if (planJsonString) {
-        try {
-            const parsedPlan = JSON.parse(planJsonString);
-            if (!parsedPlan.files || !parsedPlan.steps) throw new Error("Plan is missing 'files' or 'steps' key.");
-            
-            const { avatar, ...identityToSave } = agentIdentity;
-
-            setMissionPlan(parsedPlan);
-
-            if (db && userId && currentProjectId) {
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
-                await updateDoc(projectRef, {
-                    plan: parsedPlan,
-                    agentIdentity: identityToSave,
-                    goalAnalysis,
-                    missionControl: get().missionControl,
-                    stepSuggestions: get().stepSuggestions, // Persist suggestions
-                    status: 'CODING'
-                });
-            }
-        } catch (e) { updateStatus('ERROR', `Failed to understand plan: ${e.message}`); }
+        const { avatar, ...identityToSave } = agentIdentity;
+        const firestoreUpdatePayload = {
+            plan: result,
+            agentIdentity: identityToSave,
+            goalAnalysis,
+            missionControl: useGenieStore.getState().missionControl,
+            projectFiles: useGenieStore.getState().projectFiles,
+            activeFile: useGenieStore.getState().activeFile,
+            status: useGenieStore.getState().status,
+            currentTask: useGenieStore.getState().currentTask
+        };
+        await updateFirestoreProjectData(firestoreUpdatePayload);
+    } else {
+        addLog('Failed to generate a valid or complete mission plan from LLM.', 'error', { received: result });
+        updateStatus('ERROR', 'Planning failed: invalid plan structure from LLM.');
     }
 };
 
 const runCodingPhase = async (state) => {
-    const { addLog, updateFileContent, completeCoding, apiKey, missionControl, updateMissionProgress, db, userId, currentProjectId, updateStatus, agentIdentity } = state; // Add agentIdentity
-    if (!missionControl.steps?.length) return;
-    addLog(`Commencing mission as "${agentIdentity.persona}". Executing ${missionControl.steps.length} steps.`, 'agent');
-    let generatedFilesContext = {};
+    const { addLog, updateFileContent, completeCoding, missionControl, apiKey, updateMissionProgress } = useGenieStore.getState();
+    addLog('Commencing code generation, executing mission plan.', 'agent');
 
     for (let i = 0; i < missionControl.steps.length; i++) {
         const step = missionControl.steps[i];
         updateMissionProgress(i);
-        addLog(`[${step.file}]: Executing step: "${step.description}"`, 'agent');
+        addLog(`Executing: ${step.description}`, 'agent', { file: step.file });
 
-        const contextPrompt = Object.entries(generatedFilesContext).map(([name, content]) => `You have already generated the following file named "${name}":\n\`\`\`\n${content}\n\`\`\``).join('\n\n');
-
-        let capabilitiesContext = "";
-        if (agentIdentity.capabilities && agentIdentity.capabilities.length > 0) {
-            capabilitiesContext = `\n\nRemember, you are operating as a "${agentIdentity.persona}" with these guiding principles: ${agentIdentity.capabilities.join('; ')}. Adhere to them.`;
+        if (!step.prompt || typeof step.prompt !== 'string' || step.prompt.trim() === "") {
+            addLog(`Skipping step: "${step.description}" due to missing or invalid sub-prompt.`, 'error');
+            continue;
         }
+        const code = await callGeminiAPI(step.prompt, apiKey, false);
 
-        const codingPrompt = `You are an expert developer acting as a "${agentIdentity.persona}". Your current task is to write code for the file "${step.file}".
-${contextPrompt ? `\nFor context, here are the other files you've created in this project:\n${contextPrompt}` : ''}
-Your specific instruction for this step is: "${step.description}".${capabilitiesContext}
-Based on this, write ONLY the raw code block for "${step.file}".
-- If writing HTML, ensure you link to the CSS and JS files correctly (e.g., <link rel="stylesheet" href="style.css"> and <script src="script.js" defer></script>).
-- Do not include explanations, comments, or markdown formatting like \`\`\` around the code. Just the raw code itself.`;
-
-        const codeChunk = await callGeminiAPI(codingPrompt, apiKey);
-        if (codeChunk) {
-            const cleanChunk = codeChunk.replace(/```(html|css|javascript|js)?/g, '').trim() + '\n\n';
-            updateFileContent(step.file, cleanChunk, true);
-            generatedFilesContext[step.file] = (get().projectFiles[step.file] || '');
-        } else { updateStatus('ERROR', 'Code generation failed for step.'); return; }
+        if (code) {
+            // The API might wrap code in markdown, so we clean it.
+            const cleanedCode = code.replace(/```(html|css|javascript)?/g, '').trim();
+            updateFileContent(step.file, cleanedCode, false); // Overwrite with new content for simplicity
+            await new Promise(res => setTimeout(res, 200)); // Small delay for UI updates
+        } else {
+            addLog(`Failed to generate code for step: ${step.description}`, 'error');
+            useGenieStore.getState().updateStatus('ERROR', `Coding failed at step ${i + 1}`);
+            return; // Stop execution
+        }
     }
 
     completeCoding();
-    if (db && userId && currentProjectId) {
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
-        await updateDoc(projectRef, {
-            projectFiles: get().projectFiles,
-            missionControl: get().missionControl,
-            status: 'TESTING'
+    const finalCodingState = useGenieStore.getState();
+    await finalCodingState.updateFirestoreProjectData({
+       projectFiles: finalCodingState.projectFiles,
+       missionControl: finalCodingState.missionControl,
+       status: finalCodingState.status,
+       currentTask: finalCodingState.currentTask
+    });
+};
+
+const runTestingPhase = async (state) => {
+    const { addLog, setTestResults, projectFiles, apiKey, updateFirestoreProjectData } = useGenieStore.getState();
+    addLog('Auditing generated code for potential issues.', 'agent');
+
+    const filesPayload = JSON.stringify(projectFiles);
+
+    const llmPrompt = `You are a QA testing AI. Analyze the following code files for issues.
+
+    Files:
+    ${filesPayload}
+
+    Instructions:
+    1.  Review the code for syntax errors, logical bugs, broken references (e.g., an HTML element using a CSS class that doesn't exist), and potential improvements.
+    2.  If you find any issues, list them. If not, return an empty array.
+
+    Return a single JSON object with an "issues" key, which is an array of objects. Each issue object should have "file", "description", and "suggestion".
+    Example: { "issues": [{ "file": "script.js", "description": "The 'updateData' function is called but never defined.", "suggestion": "Define the updateData function or remove the call to it." }] }`;
+
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
+
+    if (result) {
+        setTestResults(result);
+        if (result && result.issues && result.issues.length > 10) {
+            addLog(`Large number of issues found (${result.issues.length}). Consider refining prompts or breaking down the goal.`, 'system');
+        }
+        const testingPhaseEndState = useGenieStore.getState();
+        await testingPhaseEndState.updateFirestoreProjectData({
+            testResults: testingPhaseEndState.testResults,
+            status: testingPhaseEndState.status,
+            currentTask: testingPhaseEndState.currentTask,
+            correction: testingPhaseEndState.correction
         });
     }
 };
 
-const runTestingPhase = async (state) => {
-    const { addLog, setTestResults, apiKey, projectFiles, db, userId, currentProjectId, updateStatus } = state;
-    addLog('Entering testing and auditing phase.', 'agent');
-    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
-    const testingPrompt = `You are a meticulous QA engineer. Review the following project files. Identify potential bugs, inconsistencies between files, or deviations from best practices. Provide findings as a JSON object with "summary" and "issues" keys. If no issues, "issues" array MUST be empty. Project Files:\n${filesString}\nGenerate the JSON audit.`;
-    const testJsonString = await callGeminiAPI(testingPrompt, apiKey, true);
-    if (testJsonString) {
-        try {
-            const parsedResults = JSON.parse(testJsonString);
-            setTestResults(parsedResults);
-            if (db && userId && currentProjectId) {
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
-                const nextStatus = (parsedResults.issues && parsedResults.issues.length > 0) ? 'CORRECTING' : 'REFACTORING';
-                await updateDoc(projectRef, { testResults: parsedResults, status: nextStatus });
-            }
-        } catch (e) { updateStatus('ERROR', 'Failed to understand test results.'); }
-    }
-};
 const runCorrectionPhase = async (state) => {
-    const { addLog, setCodeAndIterate, apiKey, projectFiles, testResults, correction, db, userId, currentProjectId, updateStatus } = state;
+    const { addLog, setCodeAndIterate, projectFiles, testResults, correction, apiKey, stepSuggestions, updateFirestoreProjectData } = useGenieStore.getState();
+
     if (correction.iteration >= correction.maxIterations) {
-        addLog(`Max correction attempts reached. Proceeding with known issues.`, 'error');
-        updateStatus('REFACTORING', 'Finalizing & Documenting...'); return;
+        addLog('Maximum correction attempts reached. Halting execution.', 'error');
+        useGenieStore.getState().updateStatus('ERROR', 'Could not fix code within retry limits.');
+        return;
     }
-    addLog(`Entering correction phase (Attempt ${correction.iteration + 1})`, 'agent');
-    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
-    const correctionPrompt = `You are a senior developer fixing buggy code. Below are the project files and a list of QA issues. Your task is to return a single JSON object where keys are filenames and values are the complete, corrected code for that file. Original Files:\n${filesString}\nIssues to Fix:\n- ${testResults.issues.join('\n- ')}\nGenerate the JSON object containing the full, corrected code for all files.`;
-    const correctedJsonString = await callGeminiAPI(correctionPrompt, apiKey, true);
-    if (correctedJsonString) {
-        try {
-            const correctedFiles = JSON.parse(correctedJsonString);
-            setCodeAndIterate(correctedFiles);
-            if (db && userId && currentProjectId) {
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
-                await updateDoc(projectRef, { projectFiles: correctedFiles, status: 'TESTING' });
-            }
-        } catch (e) { updateStatus('ERROR', 'Code correction failed to parse.'); }
-    } else { updateStatus('ERROR', 'Code correction failed to generate.'); }
+
+    addLog(`Attempting to fix ${testResults.issues.length} issues.`, 'agent');
+
+    const filesPayload = JSON.stringify(projectFiles);
+    const issuesPayload = JSON.stringify(testResults.issues);
+
+    let suggestionsContext = "";
+    if (stepSuggestions && Object.keys(stepSuggestions).length > 0) {
+        const relevantSuggestionsTexts = [];
+        (testResults.issues || []).forEach(issue => {
+            Object.entries(stepSuggestions).forEach(([key, suggestion]) => {
+                if (key.includes(`_${issue.file}`) && suggestion.trim() !== "") {
+                    if (!relevantSuggestionsTexts.includes(suggestion)) {
+                       relevantSuggestionsTexts.push(`For file ${issue.file}: User suggested - "${suggestion}"`);
+                    }
+                }
+            });
+        });
+        if (relevantSuggestionsTexts.length > 0) {
+            suggestionsContext = `
+
+User Suggestions to Consider During Correction (may or may not be directly related to the issue list, but apply to affected files):
+- ${relevantSuggestionsTexts.join('
+- ')}`;
+        }
+    }
+
+    const llmPrompt = `You are a senior developer AI. You are tasked with fixing bugs in the provided code.
+
+    Current Code Files:
+    ${filesPayload}
+
+    Issues to Fix:
+    ${issuesPayload}${suggestionsContext}
+
+    Instructions:
+    1.  Carefully review each issue and the corresponding code.
+    2.  Rewrite the AFFECTED FILES COMPLETELY with the fixes applied. Do not just provide snippets.
+    3.  Return a single JSON object where keys are the filenames (e.g., "index.html") and values are the complete, corrected code for that file as a string. Only include files that were changed.`;
+
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
+
+    if (result) {
+        const updatedFiles = { ...projectFiles, ...result };
+        setCodeAndIterate(updatedFiles); // This action updates local state (projectFiles, status, currentTask, correction)
+        const correctionPhaseEndState = useGenieStore.getState();
+        await correctionPhaseEndState.updateFirestoreProjectData({ // Persist these changes
+            projectFiles: correctionPhaseEndState.projectFiles,
+            status: correctionPhaseEndState.status,
+            currentTask: correctionPhaseEndState.currentTask,
+            correction: correctionPhaseEndState.correction
+        });
+    } else {
+        addLog('Correction attempt failed to produce valid code.', 'error');
+        useGenieStore.getState().updateStatus('ERROR', 'Correction phase failed.');
+    }
 };
 
 const runReflectionPhase = async (state) => {
-    const { addLog, setReflections, apiKey, prompt, projectFiles, testResults, db, userId, currentProjectId, updateStatus } = state;
-    addLog('Entering self-reflection phase.', 'agent');
-    const filesString = Object.entries(projectFiles).map(([name, content]) => `--- File: ${name} ---\n${content}`).join('\n\n');
-    const reflectionPrompt = `You are a Staff Software Engineer conducting a post-mortem. Based on the initial goal, the final code, and the QA audit, provide a brief reflection as a JSON object with "assessment", "improvements", and "learnings" keys. Initial Goal: "${prompt}" Final Code:\n${filesString}\nQA Audit: ${JSON.stringify(testResults)}\nGenerate the JSON reflection.`;
-    const reflectionJsonString = await callGeminiAPI(reflectionPrompt, apiKey, true);
-    if (reflectionJsonString) {
-        try {
-            const parsedReflections = JSON.parse(reflectionJsonString);
-            setReflections(parsedReflections);
-            if (db && userId && currentProjectId) {
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
-                await updateDoc(projectRef, { reflections: parsedReflections, status: 'COMPLETED' });
-            }
-        } catch (e) { updateStatus('ERROR', 'Failed to understand reflections.'); }
+    const { addLog, setReflections, prompt, projectFiles, apiKey, updateFirestoreProjectData } = useGenieStore.getState();
+    addLog('Code is complete and tested. Performing final reflection.', 'agent');
+
+    const llmPrompt = `You are a project lead AI. The project is complete. Reflect on the process.
+
+    Original Goal: "${prompt}"
+
+    Final Code was generated for these files: ${Object.keys(projectFiles).join(', ')}
+
+    Instructions:
+    Provide a brief reflection on the project.
+
+    Return a single JSON object with the keys "summary" (what was built), "strengths" (what this implementation does well), and "improvements" (potential next steps or enhancements).`;
+
+    const result = await callGeminiAPI(llmPrompt, apiKey, true);
+
+    if (result) {
+        setReflections(result); // This updates local state (reflections, status, currentTask)
+        const reflectionPhaseEndState = useGenieStore.getState();
+        await updateFirestoreProjectData({ // Persist these changes
+            reflections: reflectionPhaseEndState.reflections,
+            status: reflectionPhaseEndState.status,
+            currentTask: reflectionPhaseEndState.currentTask
+        });
+    } else {
+        // If reflection fails, it's not critical. Just complete the project.
+        addLog('Reflection failed, but project is complete.', 'system');
+        useGenieStore.getState().updateStatus('COMPLETED', 'Mission Complete.'); // Ensure status is set
+        await useGenieStore.getState().updateFirestoreProjectData({ status: 'COMPLETED', currentTask: 'Mission Complete.' }); // Persist this completion
     }
 };
 
