@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { create } from 'zustand';
 // --- FIX: Replaced non-existent LucideSwirl with a valid icon, LucideWand2 ---
-import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb } from 'lucide-react';
+// Added LucidePause, LucideStickyNote
+import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb, LucidePause, LucideStickyNote } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
@@ -39,8 +40,102 @@ const useGenieStore = create((set, get) => ({
     // API Retry Config
     apiRetryConfig: { maxRetries: 2, initialDelayMs: 1000 },
 
+    // Mission Control UI
+    expandedMissionStep: null,
+
+    // Command Palette
+    isCommandPaletteOpen: false,
+    commandPaletteSearch: "",
+    availableThemes: ['theme-nebula', 'theme-solar', 'theme-starship'],
+    commandPaletteAction: null,
+    triggerProjectDownload: false,
+
+    // Agent Pause State
+    isAgentPaused: false,
+
+    // Global Intervention Note
+    currentGlobalInterventionNote: "",
+    interventionNoteInput: "",
+    isInterventionInputVisible: false,
+
     // --- ACTIONS ---
     initializeFirebase: (db, auth) => set({ db, auth }),
+    setInterventionNoteInput: (note) => set({ interventionNoteInput: note }),
+    commitInterventionNote: () => set(state => {
+        const noteToCommit = state.interventionNoteInput.trim();
+        if (noteToCommit === "") {
+            get().updateFirestoreProjectData({ currentGlobalInterventionNote: "" });
+            return { currentGlobalInterventionNote: "", isInterventionInputVisible: false, interventionNoteInput: "" };
+        }
+        get().addLog(`User intervention note committed: "${noteToCommit}"`, 'user');
+        get().updateFirestoreProjectData({ currentGlobalInterventionNote: noteToCommit });
+        return {
+            currentGlobalInterventionNote: noteToCommit,
+            interventionNoteInput: "",
+            isInterventionInputVisible: false
+        };
+    }),
+    clearCurrentGlobalInterventionNote: () => set({ currentGlobalInterventionNote: "" }),
+    toggleInterventionInput: () => set(state => ({ isInterventionInputVisible: !state.isInterventionInputVisible, interventionNoteInput: state.currentGlobalInterventionNote || "" })),
+    toggleAgentPause: () => set(state => {
+        const newPausedState = !state.isAgentPaused;
+        if (newPausedState) {
+            get().addLog('Agent execution paused by user.', 'user');
+        } else {
+            get().addLog('Agent execution resumed by user.', 'user');
+        }
+        return { isAgentPaused: newPausedState };
+    }),
+    toggleCommandPalette: () => set(state => ({ isCommandPaletteOpen: !state.isCommandPaletteOpen, commandPaletteSearch: "" })),
+    setCommandPaletteSearch: (search) => set({ commandPaletteSearch: search }),
+    executeCommand: (commandId) => {
+        const {
+            clearCurrentProject,
+            toggleCommandPalette,
+            theme,
+            setTheme,
+            availableThemes,
+            status,
+            addLog
+        } = get();
+
+        addLog(`Command executed: ${commandId}`, 'user');
+
+        switch (commandId) {
+            case 'newProject':
+                clearCurrentProject();
+                break;
+            case 'cycleTheme':
+                const currentIndex = availableThemes.indexOf(theme);
+                const nextIndex = (currentIndex + 1) % availableThemes.length;
+                setTheme(availableThemes[nextIndex]);
+                break;
+            case 'viewLogs':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'logs' }}));
+                break;
+            case 'viewCodeForge':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'forge' }}));
+                break;
+            case 'viewProjectDetails':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'details' }}));
+                break;
+            case 'downloadProject':
+                if (status === 'COMPLETED') {
+                    set(state => ({ ...state, triggerProjectDownload: true }));
+                } else {
+                    addLog("Download Project command: Only available when project is COMPLETED.", "system");
+                }
+                break;
+            default:
+                addLog(`Unknown command: ${commandId}`, 'system');
+        }
+        toggleCommandPalette();
+    },
+    clearCommandPaletteAction: () => set({ commandPaletteAction: null }),
+    clearTriggerProjectDownload: () => set({ triggerProjectDownload: false }),
+    setExpandedMissionStep: (stepIndex) => set(state => ({
+        expandedMissionStep: state.expandedMissionStep === stepIndex ? null : stepIndex
+    })),
     updateFirestoreProjectData: async (dataToUpdate) => {
         const { db, userId, currentProjectId, addLog } = get(); // Added addLog
         if (db && userId && currentProjectId) {
@@ -75,18 +170,30 @@ const useGenieStore = create((set, get) => ({
                 agentIdentity: {...projectIdentity, avatar: avatars[projectIdentity.persona] || <LucideBrainCircuit />},
                 missionControl: project.missionControl || get().missionControl,
                 logs: project.logs || [], refinement: { isActive: false, questions: [], answers: [] },
-                status: project.status || 'IDLE', currentTask: 'Project loaded. Ready for instructions.'
+                status: project.status || 'IDLE', currentTask: 'Project loaded. Ready for instructions.',
+                expandedMissionStep: null,
+                isAgentPaused: false,
+                currentGlobalInterventionNote: project.currentGlobalInterventionNote || "",
+                interventionNoteInput: "",
+                isInterventionInputVisible: false,
             });
         }
     },
-    clearCurrentProject: () => set({
+    clearCurrentProject: () => set(state => ({
         currentProjectId: null, prompt: '', plan: null, projectFiles: {}, activeFile: 'index.html',
         testResults: null, reflections: null, logs: [],
         refinement: { isActive: false, questions: [], answers: [] },
         goalAnalysis: null, status: 'IDLE', currentTask: 'Ready. Provide a new project goal.',
         agentIdentity: { persona: 'Generalist', confidence: 0, avatar: <LucideComponent /> },
         missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
-    }),
+        expandedMissionStep: null,
+        commandPaletteAction: null,
+        triggerProjectDownload: false,
+        isAgentPaused: false,
+        currentGlobalInterventionNote: "",
+        interventionNoteInput: "",
+        isInterventionInputVisible: false,
+    })),
     startProject: async (prompt) => {
         if (!prompt || !get().apiKey) { return; }
         const newProjectId = `proj_${Date.now()}`;
@@ -125,6 +232,7 @@ const useGenieStore = create((set, get) => ({
                 manualRefinements: get().manualRefinements,
                 isManualRefinementActive: get().isManualRefinementActive,
                 stepSuggestions: {},
+                currentGlobalInterventionNote: "",
             };
 
             try {
@@ -284,8 +392,19 @@ class ErrorBoundary extends React.Component {
 // --- REACT COMPONENTS (v2.8) ---
 
 const App = () => {
-    const { status, initializeFirebase, setAuthReady, isAuthReady, currentProjectId, theme } = useGenieStore();
+    const { status, initializeFirebase, setAuthReady, isAuthReady, currentProjectId, theme, toggleCommandPalette } = useGenieStore();
     const orchestratorRunning = useRef(false);
+
+    useEffect(() => {
+        const handleGlobalKeyDown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                toggleCommandPalette();
+            }
+        };
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    }, [toggleCommandPalette]);
 
     useEffect(() => {
         try {
@@ -324,8 +443,10 @@ const App = () => {
 
     useEffect(() => {
         const state = useGenieStore.getState();
-        if (!state.isAuthReady || !state.currentProjectId || state.refinement.isActive || state.status === 'IDLE' || state.status.includes('AWAITING')) {
-           if (state.status === 'IDLE' && orchestratorRunning.current) orchestratorRunning.current = false; // Reset if idle
+        if (state.isAgentPaused || !state.isAuthReady || !state.currentProjectId || state.refinement.isActive || state.status === 'IDLE' || state.status.includes('AWAITING')) { // Added state.isAgentPaused
+           if ((state.status === 'IDLE' || state.isAgentPaused) && orchestratorRunning.current) {
+                orchestratorRunning.current = false; // Reset if idle or paused
+           }
            return;
         }
         const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
@@ -348,8 +469,8 @@ const App = () => {
                     orchestratorRunning.current = false;
                     return;
                 }
-                if (!activeStates.includes(currentState.status) || !currentState.currentProjectId || currentState.refinement.isActive) {
-                   useGenieStore.getState().addLog(`Agent Orchestrator: Conditions no longer met for ${initialStatusForRun}. Current status: ${currentState.status}. Halting.`, 'system');
+                if (!activeStates.includes(currentState.status) || !currentState.currentProjectId || currentState.refinement.isActive || currentState.isAgentPaused) { // Added currentState.isAgentPaused check
+                   useGenieStore.getState().addLog(`Agent Orchestrator: Conditions no longer met for ${initialStatusForRun} (isPaused: ${currentState.isAgentPaused}). Current status: ${currentState.status}. Halting.`, 'system');
                    orchestratorRunning.current = false;
                    return;
                 }
@@ -379,7 +500,7 @@ const App = () => {
         };
         setTimeout(runAgentLifecycle, 100);
 
-    }, [status, isAuthReady, currentProjectId, useGenieStore.getState().refinement.isActive]);
+    }, [status, isAuthReady, currentProjectId, useGenieStore.getState().refinement.isActive, useGenieStore.getState().isAgentPaused]); // Added isAgentPaused to dependencies
 
     const statusGradients = {
         'theme-nebula': { default: 'from-gray-900 to-black', active: 'from-purple-900 via-gray-900 to-gray-900', test: 'from-indigo-900 via-gray-900 to-gray-900', success: 'from-green-900 via-gray-900 to-gray-900', error: 'from-red-900 via-gray-900 to-gray-900' },
@@ -424,6 +545,9 @@ const App = () => {
                 .theme-starship { --primary: 34, 211, 238; /* cyan-400 */ }
                 .border-primary { border-color: rgb(var(--primary)); }
                 .text-primary { color: rgb(var(--primary)); }
+                .bg-primary { background-color: rgb(var(--primary)); } /* Added for completeness */
+                .bg-primary-20 { background-color: rgba(var(--primary), 0.2); } /* Ensure this is defined */
+                .ring-primary { ring-color: rgb(var(--primary)); } /* Added for completeness */
                 .animate-pulse-once { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 1; }
                 /* Custom scrollbar for webkit browsers */
                 ::-webkit-scrollbar { width: 8px; }
@@ -431,12 +555,60 @@ const App = () => {
                 ::-webkit-scrollbar-thumb { background: rgba(var(--primary), 0.5); border-radius: 4px; }
                 ::-webkit-scrollbar-thumb:hover { background: rgba(var(--primary), 0.7); }
             `}</style>
+            <CommandPalette />
+            <InterventionNoteModal />
+        </div>
+    );
+};
+
+const InterventionNoteModal = () => {
+    const {
+        isInterventionInputVisible,
+        interventionNoteInput,
+        setInterventionNoteInput,
+        commitInterventionNote,
+        toggleInterventionInput
+    } = useGenieStore();
+
+    if (!isInterventionInputVisible) return null;
+
+    const handleCommit = () => {
+        commitInterventionNote();
+    };
+    const handleCancel = () => {
+        setInterventionNoteInput(useGenieStore.getState().currentGlobalInterventionNote || "");
+        toggleInterventionInput();
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-[95%] sm:w-full max-w-md flex flex-col gap-3 border border-white/10">
+                <h2 className="text-lg font-bold flex items-center gap-2"><LucideStickyNote className="text-primary"/>Agent Guidance Note</h2>
+                <p className="text-xs text-gray-400">This note will be prepended to the next instruction for the AI (if provided before resuming). Clear it to remove.</p>
+                <textarea
+                    placeholder="E.g., 'Focus on accessibility for the next component.' or 'Use verbose comments.'"
+                    value={interventionNoteInput}
+                    onChange={(e) => setInterventionNoteInput(e.target.value)}
+                    className="bg-gray-900/70 border border-gray-600 rounded-md p-2 text-sm w-full resize-none focus:ring-2 focus:ring-primary focus:outline-none transition"
+                    rows={4}
+                />
+                <div className="flex justify-end gap-3 mt-2">
+                    <button onClick={handleCancel} className="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-3 rounded-md transition-colors text-xs">Cancel</button>
+                    <button onClick={handleCommit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-3 rounded-md transition-colors text-xs">Commit Note</button>
+                </div>
+            </div>
         </div>
     );
 };
 
 const Header = () => {
-    const { theme, setTheme, status } = useGenieStore();
+    const { theme: currentSelectedTheme, setTheme, status } = useGenieStore(); // Renamed theme to currentSelectedTheme
+    const themeColors = {
+        'theme-nebula': 'rgb(168, 85, 247)', // purple-500
+        'theme-solar': 'rgb(249, 115, 22)',  // orange-500
+        'theme-starship': 'rgb(34, 211, 238)' // cyan-400
+    };
+
     return (
         <header className="flex-shrink-0 flex items-center justify-between p-3 border-b border-white/10 bg-black/20 backdrop-blur-sm shadow-lg">
             <div className="flex items-center gap-3">
@@ -446,11 +618,20 @@ const Header = () => {
                     <p className="text-xs text-gray-400">Cognitive Engine</p>
                 </div>
             </div>
-            <div className="flex items-center gap-2 sm:gap-4"> {/* Adjust gap for small screens */}
-                <div className="flex items-center gap-1 sm:gap-2"> {/* Smaller gap for theme buttons */}
-                    <Tooltip text="Nebula Theme"><button onClick={() => setTheme('theme-nebula')} className={`p-2 rounded-full ${theme === 'theme-nebula' ? 'bg-purple-500/50' : ''}`}><LucideWand2 size={16} className="text-purple-400"/></button></Tooltip>
-                    <Tooltip text="Solar Flare Theme"><button onClick={() => setTheme('theme-solar')} className={`p-2 rounded-full ${theme === 'theme-solar' ? 'bg-orange-500/50' : ''}`}><LucideSun size={16} className="text-orange-400"/></button></Tooltip>
-                    <Tooltip text="Starship Theme"><button onClick={() => setTheme('theme-starship')} className={`p-2 rounded-full ${theme === 'theme-starship' ? 'bg-cyan-500/50' : ''}`}><LucideMoon size={16} className="text-cyan-400"/></button></Tooltip>
+            <div className="flex items-center gap-2 sm:gap-4">
+                <div className="flex items-center gap-1 sm:gap-2">
+                    {(['theme-nebula', 'theme-solar', 'theme-starship']).map(themeName => (
+                        <Tooltip key={themeName} text={`${themeName.split('-')[1].charAt(0).toUpperCase() + themeName.split('-')[1].slice(1)} Theme`}>
+                            <button
+                                onClick={() => setTheme(themeName)}
+                                className={`p-1.5 rounded-full transition-all duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black/50 ${currentSelectedTheme === themeName ? 'ring-2 ring-[rgb(var(--primary))] shadow-lg' : 'hover:bg-white/10'}`}
+                            >
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: themeColors[themeName] }}>
+                                    {currentSelectedTheme === themeName && <LucideCheckCircle size={12} className="text-white/70" />}
+                                </div>
+                            </button>
+                        </Tooltip>
+                    ))}
                 </div>
                 {status === 'COMPLETED' && <DownloadProjectButton />}
             </div>
@@ -459,8 +640,9 @@ const Header = () => {
 };
 
 const DownloadProjectButton = () => {
-    const { projectFiles, prompt } = useGenieStore();
-    const handleDownload = () => {
+    const { projectFiles, prompt, triggerProjectDownload, clearTriggerProjectDownload } = useGenieStore();
+
+    const actualDownloadLogic = useCallback(() => {
         const zip = new window.JSZip();
         Object.entries(projectFiles).forEach(([fileName, content]) => {
             zip.file(fileName, content);
@@ -474,9 +656,17 @@ const DownloadProjectButton = () => {
             link.click();
             document.body.removeChild(link);
         });
-    };
+   }, [projectFiles, prompt]);
+
+   useEffect(() => {
+       if (triggerProjectDownload) {
+           actualDownloadLogic();
+           clearTriggerProjectDownload();
+       }
+   }, [triggerProjectDownload, clearTriggerProjectDownload, actualDownloadLogic]);
+
     return (
-        <button onClick={handleDownload} className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-300 font-bold py-2 px-4 rounded-lg transition-colors">
+        <button onClick={actualDownloadLogic} className="flex items-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-300 font-bold py-2 px-4 rounded-lg transition-colors">
             <LucideDownload size={16} />
             Download Project
         </button>
@@ -505,7 +695,7 @@ const SuggestionModal = () => {
     return (
         <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"> {/* p-4 is correct as per previous step */}
             <div className="bg-gray-800 rounded-lg shadow-2xl p-6 w-[95%] sm:w-full max-w-lg flex flex-col gap-4 border border-white/10"> {/* This line is the target */}
-                <h2 className="text-xl font-bold flex items-center gap-2"><LucideLightbulb className="text-yellow-400"/>Suggest an Edit</h2>
+                <h2 className="text-xl font-bold flex items-center gap-2"><LucideLightbulb className="text-primary"/>Suggest an Edit</h2> {/* Changed to text-primary */}
                 <p className="text-sm text-gray-400">For step: <span className="font-medium text-gray-300 truncate" title={suggestionModal.description}>{suggestionModal.description}</span></p>
                 <p className="text-sm text-gray-400">File: <span className="font-medium text-gray-300">{suggestionModal.file}</span></p>
                 <textarea
@@ -517,7 +707,7 @@ const SuggestionModal = () => {
                 />
                 <div className="flex justify-end gap-3 mt-2">
                     <button onClick={closeSuggestionModal} className="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-4 rounded-md transition-colors">Cancel</button>
-                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-4 rounded-md transition-colors" style={{backgroundColor: `rgb(var(--primary))`}}>Save Suggestion</button>
+                    <button onClick={handleSubmit} className="bg-primary hover:opacity-90 text-white font-bold py-2 px-4 rounded-md transition-colors">Save Suggestion</button> {/* Removed inline style, relies on bg-primary class */}
                 </div>
             </div>
         </div>
@@ -526,13 +716,43 @@ const SuggestionModal = () => {
 
 const Workspace = () => {
     const [activeTab, setActiveTab] = useState('logs');
-    const { status } = useGenieStore();
+    const { status, activeFile, projectFiles, commandPaletteAction, clearCommandPaletteAction } = useGenieStore(state => ({ // Added commandPalette related state
+        status: state.status,
+        activeFile: state.activeFile,
+        projectFiles: state.projectFiles,
+        commandPaletteAction: state.commandPaletteAction,
+        clearCommandPaletteAction: state.clearCommandPaletteAction
+    }));
     const showGoalAnalysis = status !== 'IDLE' && status !== 'AWAITING_KEY' && status !== 'AWAITING_AUTH';
+
+    useEffect(() => { // For "View Code" from Mission Control or direct file selection
+        if (activeFile && projectFiles.hasOwnProperty(activeFile) && activeTab !== 'forge') {
+            setActiveTab('forge');
+        }
+    }, [activeFile, projectFiles, activeTab]);
+
+    useEffect(() => { // For Command Palette actions to switch tabs
+        if (commandPaletteAction?.target === 'workspaceTab') {
+            const tabToSet = commandPaletteAction.value;
+            if (['logs', 'analysis', 'forge', 'details'].includes(tabToSet)) {
+                 if (tabToSet === 'analysis' && !showGoalAnalysis) {
+                     setActiveTab('logs');
+                 } else if (tabToSet === 'details' && (status === 'IDLE' || status.includes('AWAITING'))) { // Prevent details if no active project
+                    setActiveTab('logs');
+                 }
+                 else {
+                     setActiveTab(tabToSet);
+                 }
+            }
+            clearCommandPaletteAction();
+        }
+    }, [commandPaletteAction, clearCommandPaletteAction, showGoalAnalysis, status, activeTab]);
+
 
     const tabButtonStyle = (tabName) => {
         const base = "whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ";
         if (activeTab === tabName) {
-            return base + "border-primary text-primary";
+            return base + "border-primary text-primary"; // Uses theme classes
         }
         return base + "border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500";
     };
@@ -541,15 +761,15 @@ const Workspace = () => {
         <div className="flex flex-col h-full">
             <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
                 <nav className="-mb-px flex space-x-2" aria-label="Tabs">
-                    <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')} style={{borderColor: activeTab === 'logs' ? `rgb(var(--primary))` : '', color: activeTab === 'logs' ? `rgb(var(--primary))` : ''}}>
+                    <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')}>
                         <LucideTerminal size={16} /> Agent Logs
                     </button>
                     {showGoalAnalysis && (
-                        <button onClick={() => setActiveTab('analysis')} className={tabButtonStyle('analysis')} style={{borderColor: activeTab === 'analysis' ? `rgb(var(--primary))` : '', color: activeTab === 'analysis' ? `rgb(var(--primary))` : ''}}>
+                        <button onClick={() => setActiveTab('analysis')} className={tabButtonStyle('analysis')}>
                             <LucideLightbulb size={16} /> Goal Analysis
                         </button>
                     )}
-                    <button onClick={() => setActiveTab('forge')} className={tabButtonStyle('forge')} style={{borderColor: activeTab === 'forge' ? `rgb(var(--primary))` : '', color: activeTab === 'forge' ? `rgb(var(--primary))` : ''}}>
+                    <button onClick={() => setActiveTab('forge')} className={tabButtonStyle('forge')}>
                         <LucideFileCode size={16} /> Code Forge
                     </button>
                 </nav>
@@ -704,7 +924,7 @@ This action cannot be undone.`)) {
             <div className="space-y-2 overflow-y-auto">
                 {projects.length === 0 ? ( <p className="text-sm text-gray-500">No saved projects found.</p> ) : (
                     projects.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)).map(p => (
-                        <div key={p.id} className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${currentProjectId === p.id ? 'bg-primary/20' : 'bg-gray-800/50 hover:bg-gray-700/50'}`}>
+                        <div key={p.id} className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${currentProjectId === p.id ? 'bg-primary-20' : 'bg-gray-800/50 hover:bg-gray-700/50'}`}>
                             <div onClick={() => setCurrentProject(p.id)} className="flex-grow">
                                 <p className="font-semibold truncate text-sm">{p.prompt}</p>
                                 <p className="text-xs text-gray-400">{new Date(p.createdAt).toLocaleString()}</p>
@@ -719,10 +939,11 @@ This action cannot be undone.`)) {
 };
 
 const MissionControl = () => {
-    const { missionControl } = useGenieStore();
+    const { missionControl, expandedMissionStep, setExpandedMissionStep, stepSuggestions, currentProjectId, status } = useGenieStore();
     if (!missionControl?.steps?.length) return null;
 
     const progress = missionControl.totalWorkUnits > 0 ? (missionControl.completedWorkUnits / missionControl.totalWorkUnits) * 100 : 0;
+    const displayableRemainingWorkUnits = missionControl.totalWorkUnits - missionControl.completedWorkUnits;
 
     const getStatusStyles = (status) => {
         switch (status) {
@@ -733,8 +954,8 @@ const MissionControl = () => {
         }
     };
 
-    const handleStepClick = (logIndex) => {
-        if (logIndex !== -1) {
+    const handleStepClick = (logIndex) => { // This is for log navigation, not expansion
+        if (logIndex !== -1 && expandedMissionStep === null) { // Only navigate if not trying to expand/collapse
             const logElement = document.getElementById(`log-item-${logIndex}`);
             if (logElement) {
                 logElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -746,23 +967,80 @@ const MissionControl = () => {
 
     return (
         <div className="flex-shrink-0 bg-black/30 backdrop-blur-sm rounded-lg p-4 shadow-lg border border-white/10">
-            <h2 className="text-lg font-bold mb-3">Mission Control</h2>
+            <div className="flex justify-between items-center mb-1">
+                <h2 className="text-lg font-bold">Mission Control</h2>
+                {missionControl.steps.length > 0 && status !== 'COMPLETED' && displayableRemainingWorkUnits > 0 && (
+                   <p className="text-xs text-gray-400">Est. WU Remaining: {displayableRemainingWorkUnits}</p>
+                )}
+            </div>
             <div className="w-full bg-black/30 rounded-full h-2.5 mb-4">
                 <div className="bg-gradient-to-r from-primary to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ backgroundImage: `linear-gradient(to right, rgb(var(--primary)), #6366f1)`, width: `${progress}%` }}></div>
             </div>
-            <div className="flex flex-col sm:flex-row items-center sm:space-x-2 overflow-x-auto pb-2 gap-2 sm:gap-0">
-                {missionControl.steps.map((step, index) => (
-                    <Tooltip key={index} text={step.description}>
-                        <div onClick={() => handleStepClick(step.logIndex)} className={`flex-shrink-0 w-full sm:w-48 p-3 rounded-lg border-2 transition-all cursor-pointer ${getStatusStyles(step.status)}`}>
-                            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-col sm:flex-row items-start sm:space-x-2 overflow-x-auto pb-2 gap-2 sm:gap-0">
+                {missionControl.steps.map((step, index) => {
+                    const isExpanded = expandedMissionStep === index;
+                    const suggestionKey = `${currentProjectId}_${index}_${step.file}`;
+                    const suggestion = stepSuggestions[suggestionKey];
+
+                    return (
+                        <div key={index}
+                             className={`flex-shrink-0 w-full sm:w-56 p-3 rounded-lg border-2 transition-all duration-300 ease-in-out cursor-pointer hover:border-primary/70 ${getStatusStyles(step.status)} ${isExpanded ? 'ring-2 ring-primary ring-offset-2 ring-offset-black/50' : ''}`}
+                             onClick={() => {
+                                 handleStepClick(step.logIndex); // Allow log navigation on first click if not expanded
+                                 setExpandedMissionStep(index); // Then toggle expansion
+                             }}
+                        >
+                            <div className="flex items-center justify-between mb-1">
                                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full`}>{step.status}</span>
                                 <span className="text-xs text-gray-400">WU: {step.time_estimate || 5}</span>
                             </div>
-                            <p className="text-sm font-medium truncate">{step.description}</p>
+                            <p className={`text-sm font-medium ${isExpanded ? 'whitespace-normal' : 'truncate'}`} title={step.description}>{step.description}</p>
                             {step.file && <p className="text-xs text-gray-500 capitalize">File: {step.file}</p>}
+
+                            <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2">
+                                <Tooltip text={`View code for ${step.file}`}>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            useGenieStore.getState().setViewCodeForStep(step.file);
+                                        }}
+                                        className="p-1 hover:bg-white/20 rounded transition-colors"
+                                        disabled={!useGenieStore.getState().projectFiles.hasOwnProperty(step.file)}
+                                    >
+                                        <LucideFileCode size={14} className="text-blue-400" />
+                                    </button>
+                                </Tooltip>
+                                <Tooltip text="Suggest an edit for this step">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            useGenieStore.getState().openSuggestionModal(step, index);
+                                        }}
+                                        className="p-1 hover:bg-white/20 rounded transition-colors"
+                                    >
+                                        <LucideWand2 size={14} className="text-yellow-400" />
+                                    </button>
+                                </Tooltip>
+                            </div>
+
+                            {isExpanded && (
+                                <div className="mt-2 pt-2 border-t border-dashed border-white/20">
+                                    <h4 className="text-xs font-semibold text-gray-300 mb-1">Details:</h4>
+                                    <p className="text-xs text-gray-400 whitespace-normal break-words mb-2">
+                                        <span className="font-medium text-gray-300">Full Description:</span> {step.description}
+                                    </p>
+                                    {suggestion && (
+                                        <div className="mt-1 p-2 bg-yellow-500/10 rounded-md">
+                                            <p className="text-xs font-semibold text-yellow-300 flex items-center gap-1"><LucideLightbulb size={12}/>User Suggestion:</p>
+                                            <p className="text-xs text-yellow-200 whitespace-normal break-words">{suggestion}</p>
+                                        </div>
+                                    )}
+                                    {!suggestion && <p className="text-xs text-gray-500 italic">No user suggestions for this step.</p>}
+                                </div>
+                            )}
                         </div>
-                    </Tooltip>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
@@ -867,6 +1145,7 @@ const CodeForge = () => {
                 <nav className="-mb-px flex space-x-2 overflow-x-auto" aria-label="Tabs">
                     {fileNames.map(name => (
                         <button key={name} onClick={() => setActiveFile(name)}
+                            // Relies on the same logic as tabButtonStyle from Workspace for active state
                             className={`whitespace-nowrap py-3 px-2 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${activeFile === name ? 'border-primary text-primary' : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'}`}>
                             {getFileIcon(name)} {name}
                         </button>
@@ -1043,8 +1322,12 @@ const RefinementModal = () => {
 };
 
 const StatusBar = () => {
-    const { status, currentTask, userId } = useGenieStore();
+    const { status, currentTask, userId, isAgentPaused, toggleAgentPause } = useGenieStore();
+    const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
+    const canPause = activeStates.includes(status);
+
     const getStatusIndicator = () => {
+        if (isAgentPaused && canPause) return <LucidePause size={16} className="text-yellow-400" />; // Show pause icon if paused and pausable
         switch (status) {
             case 'AWAITING_KEY': case 'AWAITING_AUTH': case 'ERROR': return <LucideAlertTriangle className="text-red-400" size={16} />;
             case 'IDLE': return <LucideBot className="text-gray-400" size={16} />;
@@ -1053,24 +1336,162 @@ const StatusBar = () => {
             default: return <LucideLoader className="animate-spin text-primary" size={16} />;
         }
     };
-    return ( <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0 flex-wrap sm:flex-nowrap gap-y-1"> {/* Allow wrapping and gap */}
-        <div className="flex items-center gap-2">
-            {getStatusIndicator()}
-            <span className="truncate max-w-[calc(100vw-150px)] sm:max-w-none">{currentTask}</span> {/* Truncate currentTask with a max-width */}
-        </div>
-        {userId && <div className="font-mono text-gray-500 text-nowrap">UserID: {userId}</div>} {/* Ensure UserID doesn't wrap awkwardly */}
-    </footer> );
+    return (
+        <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0 flex-wrap sm:flex-nowrap gap-y-1">
+            <div className="flex items-center gap-2">
+                {getStatusIndicator()}
+                <span className="truncate max-w-[calc(100vw-200px)] sm:max-w-none">{isAgentPaused && canPause ? "Paused: " + currentTask : currentTask}</span>
+            </div>
+            <div className="flex items-center gap-x-2">
+                 {canPause && (
+                    <Tooltip text={isAgentPaused ? "Resume Agent" : "Pause Agent"}>
+                        <button onClick={toggleAgentPause} className="p-1 hover:bg-white/20 rounded">
+                            {isAgentPaused ? <LucidePlay size={14} className="text-green-400" /> : <LucidePause size={14} className="text-yellow-400" />}
+                        </button>
+                    </Tooltip>
+                )}
+                {isAgentPaused && (
+                    <Tooltip text="Add/Edit Agent Guidance Note">
+                        <button onClick={useGenieStore.getState().toggleInterventionInput} className="p-1 hover:bg-white/20 rounded">
+                            <LucideStickyNote size={14} className="text-blue-400" />
+                        </button>
+                    </Tooltip>
+                )}
+                {isAgentPaused && (
+                    <Tooltip text="Add/Edit Agent Guidance Note">
+                        <button onClick={useGenieStore.getState().toggleInterventionInput} className="p-1 hover:bg-white/20 rounded">
+                            <LucideStickyNote size={14} className="text-blue-400" />
+                        </button>
+                    </Tooltip>
+                )}
+                {userId && <div className="font-mono text-gray-500 text-nowrap">UserID: {userId}</div>}
+            </div>
+        </footer>
+    );
 };
 
 // --- AGENT LIFECYCLE & LLM LOGIC (v2.8 - IMPLEMENTED) ---
+
+// CommandPalette component remains unchanged from previous step.
+const CommandPalette = () => {
+    const {
+        isCommandPaletteOpen,
+        toggleCommandPalette,
+        commandPaletteSearch,
+        setCommandPaletteSearch,
+        executeCommand,
+        status
+    } = useGenieStore();
+
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    const inputRef = useRef(null);
+
+    const allCommands = [
+        { id: 'newProject', name: 'New Project', description: 'Clear current project and start fresh.', icon: <LucideFileText size={18}/> },
+        { id: 'cycleTheme', name: 'Cycle Theme', description: 'Switch to the next available theme.', icon: <LucidePalette size={18}/> },
+        { id: 'viewLogs', name: 'View Logs', description: 'Open the Agent Logs tab.', icon: <LucideTerminal size={18}/> },
+        { id: 'viewCodeForge', name: 'View Code Forge', description: 'Open the Code Forge tab.', icon: <LucideFileCode size={18}/> },
+        { id: 'viewProjectDetails', name: 'View Project Details', description: 'Open project configuration and insights.', icon: <LucideWrench size={18}/> },
+        { id: 'downloadProject', name: 'Download Project', description: 'Download current project as ZIP (if completed).', icon: <LucideDownload size={18}/>, disabled: status !== 'COMPLETED' },
+    ];
+
+    const filteredCommands = allCommands.filter(cmd =>
+        cmd.name.toLowerCase().includes(commandPaletteSearch.toLowerCase()) ||
+        cmd.description.toLowerCase().includes(commandPaletteSearch.toLowerCase())
+    );
+
+    useEffect(() => {
+        if (isCommandPaletteOpen && inputRef.current) {
+            inputRef.current.focus();
+        }
+        setSelectedIndex(0);
+    }, [isCommandPaletteOpen, commandPaletteSearch]);
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (!isCommandPaletteOpen) return;
+            if (e.key === 'Escape') {
+                toggleCommandPalette();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSelectedIndex(prev => Math.min(prev + 1, filteredCommands.length - 1));
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSelectedIndex(prev => Math.max(prev - 1, 0));
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (filteredCommands[selectedIndex] && !filteredCommands[selectedIndex].disabled) {
+                    executeCommand(filteredCommands[selectedIndex].id);
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isCommandPaletteOpen, filteredCommands, selectedIndex, executeCommand, toggleCommandPalette]);
+
+    if (!isCommandPaletteOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-50 pt-[15vh]">
+            <div className="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg border border-white/10">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    placeholder="Type a command or search..."
+                    value={commandPaletteSearch}
+                    onChange={(e) => setCommandPaletteSearch(e.target.value)}
+                    className="w-full p-4 bg-transparent text-lg text-white placeholder-gray-500 focus:outline-none border-b border-white/10"
+                />
+                <ul className="max-h-[40vh] overflow-y-auto">
+                    {filteredCommands.length === 0 && (
+                        <li className="p-4 text-center text-gray-500">No commands found.</li>
+                    )}
+                    {filteredCommands.map((cmd, index) => (
+                        <li key={cmd.id}>
+                            <button
+                                onClick={() => !cmd.disabled && executeCommand(cmd.id)}
+                                disabled={cmd.disabled}
+                                className={`w-full flex items-center gap-3 p-3 text-left transition-colors ${cmd.disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary-20'} ${index === selectedIndex ? 'bg-primary-20' : ''}`}
+                                style={index === selectedIndex && !cmd.disabled ? {backgroundColor: 'rgba(var(--primary), 0.2)'} : {}}
+                            >
+                                <span className={cmd.disabled ? "text-gray-600" : "text-primary"} style={{color: cmd.disabled ? '' : `rgb(var(--primary))`}}>{cmd.icon}</span>
+                                <div>
+                                    <p className={`font-medium ${cmd.disabled ? "text-gray-500" : "text-white"}`}>{cmd.name}</p>
+                                    <p className={`text-xs ${cmd.disabled ? "text-gray-600" : "text-gray-400"}`}>{cmd.description}</p>
+                                </div>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        </div>
+    );
+};
+
 const callGeminiAPI = async (promptText, apiKey, isJson = false) => {
-    const { addLog, apiRetryConfig, updateStatus: updateAgentStatus } = useGenieStore.getState();
-    addLog(`Sending request to Gemini API... (isJson: ${isJson})`, 'tool', { promptLength: promptText.length });
+    const { addLog, apiRetryConfig, updateStatus: updateAgentStatus, status: currentStatus, currentGlobalInterventionNote, clearCurrentGlobalInterventionNote, updateFirestoreProjectData } = useGenieStore.getState();
+
+    let finalPromptText = promptText;
+    if (currentGlobalInterventionNote && currentGlobalInterventionNote.trim() !== "") {
+        finalPromptText = `User's Mid-Process Guidance (consider for this task):
+${currentGlobalInterventionNote}
+
+---
+
+Original Prompt:
+${promptText}`;
+        addLog('Prepending user intervention note to current API call.', 'system', {note: currentGlobalInterventionNote});
+        clearCurrentGlobalInterventionNote();
+        updateFirestoreProjectData({ currentGlobalInterventionNote: "" });
+    }
+
+    updateAgentStatus(currentStatus, 'Waiting for Gemini API response...');
+    addLog(`Sending request to Gemini API... (isJson: ${isJson})`, 'tool', { promptLength: finalPromptText.length });
 
     let retries = 0;
     while (retries <= apiRetryConfig.maxRetries) {
         try {
-            const payload = { contents: [{ role: "user", parts: [{ text: promptText }] }] };
+            const payload = { contents: [{ role: "user", parts: [{ text: finalPromptText }] }] }; // Use finalPromptText
             if (isJson) {
                 payload.generationConfig = { responseMimeType: "application/json" };
             }
@@ -1172,6 +1593,8 @@ const runAnalysisPhase = async (state) => {
 
 const runPlanningPhase = async (state) => {
     const { addLog, setMissionPlan, goalAnalysis, apiKey, agentIdentity, updateStatus, updateFirestoreProjectData } = useGenieStore.getState();
+    // Refined task message
+    updateStatus(useGenieStore.getState().status, 'Generating detailed mission plan...');
     addLog('Architecting solution and generating a step-by-step mission plan.', 'agent');
 
     if (!goalAnalysis || !goalAnalysis.intent || !goalAnalysis.entities || !goalAnalysis.technologies) {
@@ -1218,12 +1641,16 @@ const runPlanningPhase = async (state) => {
 };
 
 const runCodingPhase = async (state) => {
-    const { addLog, updateFileContent, completeCoding, missionControl, apiKey, updateMissionProgress } = useGenieStore.getState();
-    addLog('Commencing code generation, executing mission plan.', 'agent');
+    const { addLog, updateFileContent, completeCoding, missionControl, apiKey, updateMissionProgress, updateStatus } = useGenieStore.getState();
+    addLog(`Commencing mission as "${state.agentIdentity.persona}". Executing ${missionControl.steps.length} steps.`, 'agent'); // Used state.agentIdentity from parameter
+    updateStatus('CODING', `Preparing to code ${missionControl.steps.length} steps...`);
 
     for (let i = 0; i < missionControl.steps.length; i++) {
         const step = missionControl.steps[i];
         updateMissionProgress(i);
+
+        const progressText = `Coding step ${i + 1}/${missionControl.steps.length}: ${step.description} (${step.file})`;
+        updateStatus('CODING', progressText);
         addLog(`Executing: ${step.description}`, 'agent', { file: step.file });
 
         if (!step.prompt || typeof step.prompt !== 'string' || step.prompt.trim() === "") {
@@ -1255,7 +1682,8 @@ const runCodingPhase = async (state) => {
 };
 
 const runTestingPhase = async (state) => {
-    const { addLog, setTestResults, projectFiles, apiKey, updateFirestoreProjectData } = useGenieStore.getState();
+    const { addLog, setTestResults, projectFiles, apiKey, updateFirestoreProjectData, updateStatus } = useGenieStore.getState();
+    updateStatus(useGenieStore.getState().status, 'Auditing all generated files...');
     addLog('Auditing generated code for potential issues.', 'agent');
 
     const filesPayload = JSON.stringify(projectFiles);
@@ -1298,6 +1726,7 @@ const runCorrectionPhase = async (state) => {
         return;
     }
 
+    updateStatus(useGenieStore.getState().status, `Correcting code (Attempt ${correction.iteration + 1}/${correction.maxIterations} for ${testResults.issues.length} issues)...`);
     addLog(`Attempting to fix ${testResults.issues.length} issues.`, 'agent');
 
     const filesPayload = JSON.stringify(projectFiles);
@@ -1356,7 +1785,8 @@ User Suggestions to Consider During Correction (may or may not be directly relat
 };
 
 const runReflectionPhase = async (state) => {
-    const { addLog, setReflections, prompt, projectFiles, apiKey, updateFirestoreProjectData } = useGenieStore.getState();
+    const { addLog, setReflections, prompt, projectFiles, apiKey, updateFirestoreProjectData, updateStatus } = useGenieStore.getState();
+    updateStatus(useGenieStore.getState().status, 'Generating final project reflection...');
     addLog('Code is complete and tested. Performing final reflection.', 'agent');
 
     const llmPrompt = `You are a project lead AI. The project is complete. Reflect on the process.
