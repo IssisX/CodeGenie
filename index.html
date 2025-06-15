@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { create } from 'zustand';
+// IMPORTANT for "self-contained" execution without a build step:
+// The 'persist' middleware is imported from 'zustand/middleware'.
+// If running this HTML file directly in a browser, ensure that the version of 'zustand'
+// being loaded (e.g., from a CDN) includes this middleware, or that your environment
+// can otherwise resolve this module path. If not, the LocalStorage persistence
+// feature for theme and log filters will not work, and the app might fail to initialize.
+// For development with Node.js/npm, this import works if 'zustand' is installed.
+import { persist } from 'zustand/middleware';
 // --- FIX: Replaced non-existent LucideSwirl with a valid icon, LucideWand2 ---
-// Added LucidePause, LucideStickyNote
-import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb, LucidePause, LucideStickyNote } from 'lucide-react';
+// Added LucidePause, LucideStickyNote, LucideMaximize2, LucideMinimize2. LucideWand2 is already present.
+import { LucideShield, LucideTerminal, LucideFileCode, LucideFlaskConical, LucideBrainCircuit, LucidePlay, LucideLoader, LucideCheckCircle, LucideAlertTriangle, LucideBot, LucideUser, LucideFileText, LucideSparkles, LucideSave, LucideFolder, LucideTrash2, LucideWrench, LucideMessageCircle, LucideSend, LucidePalette, LucideDatabase, LucideComponent, LucideFileJson, LucideFilter, LucideSun, LucideMoon, LucideWand2, LucideDownload, LucideLightbulb, LucidePause, LucideStickyNote, LucideMaximize2, LucideMinimize2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
 
 // --- ZUSTAND STATE MANAGEMENT STORE (v2.8) ---
-const useGenieStore = create((set, get) => ({
-    // Core State
-    status: 'AWAITING_KEY', logs: [], currentTask: 'Idle',
+const useGenieStore = create(
+    persist( // Wrap with persist middleware
+        (set, get) => ({
+            // Core State
+            status: 'AWAITING_KEY', logs: [], currentTask: 'Idle',
 
     // User & Project Inputs
     apiKey: '', prompt: '', userId: null, projects: [], currentProjectId: null,
@@ -58,8 +68,410 @@ const useGenieStore = create((set, get) => ({
     interventionNoteInput: "",
     isInterventionInputVisible: false,
 
+    // Error Recovery
+    errorRecoverySuggestions: [],
+
+    // Focus Mode
+    focusedPanel: null, // null, 'workspace', 'preview', 'control'
+
     // --- ACTIONS ---
+    toggleFocusedPanel: (panelName) => set(state => ({
+        focusedPanel: state.focusedPanel === panelName ? null : panelName,
+    })),
     initializeFirebase: (db, auth) => set({ db, auth }),
+    // generateErrorRecoverySuggestions will be re-added/updated below
+    setInterventionNoteInput: (note) => set({ interventionNoteInput: note }),
+    commitInterventionNote: () => set(state => {
+        const noteToCommit = state.interventionNoteInput.trim();
+        if (noteToCommit === "") {
+            get().updateFirestoreProjectData({ currentGlobalInterventionNote: "" });
+            return { currentGlobalInterventionNote: "", isInterventionInputVisible: false, interventionNoteInput: "" };
+        }
+        get().addLog(`User intervention note committed: "${noteToCommit}"`, 'user');
+        get().updateFirestoreProjectData({ currentGlobalInterventionNote: noteToCommit });
+        return {
+            currentGlobalInterventionNote: noteToCommit,
+            interventionNoteInput: "",
+            isInterventionInputVisible: false
+        };
+    }),
+    clearCurrentGlobalInterventionNote: () => set({ currentGlobalInterventionNote: "" }),
+    toggleInterventionInput: () => set(state => ({ isInterventionInputVisible: !state.isInterventionInputVisible, interventionNoteInput: state.currentGlobalInterventionNote || "" })),
+    toggleAgentPause: () => set(state => {
+        const newPausedState = !state.isAgentPaused;
+        if (newPausedState) {
+            get().addLog('Agent execution paused by user.', 'user');
+        } else {
+            get().addLog('Agent execution resumed by user.', 'user');
+        }
+        return { isAgentPaused: newPausedState };
+    }),
+    toggleCommandPalette: () => set(state => ({ isCommandPaletteOpen: !state.isCommandPaletteOpen, commandPaletteSearch: "" })),
+    setCommandPaletteSearch: (search) => set({ commandPaletteSearch: search }),
+    executeCommand: (commandId) => {
+        const {
+            clearCurrentProject,
+            toggleCommandPalette,
+            theme,
+            setTheme,
+            availableThemes,
+            status,
+            addLog
+        } = get();
+
+        addLog(`Command executed: ${commandId}`, 'user');
+
+        switch (commandId) {
+            case 'newProject':
+                clearCurrentProject();
+                break;
+            case 'cycleTheme':
+                const currentIndex = availableThemes.indexOf(theme);
+                const nextIndex = (currentIndex + 1) % availableThemes.length;
+                setTheme(availableThemes[nextIndex]);
+                break;
+            case 'viewLogs':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'logs' }}));
+                break;
+            case 'viewCodeForge':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'forge' }}));
+                break;
+            case 'viewProjectDetails':
+                set(state => ({ ...state, commandPaletteAction: { target: 'workspaceTab', value: 'details' }}));
+                break;
+            case 'downloadProject':
+                if (status === 'COMPLETED') {
+                    set(state => ({ ...state, triggerProjectDownload: true }));
+                } else {
+                    addLog("Download Project command: Only available when project is COMPLETED.", "system");
+                }
+                break;
+            default:
+                addLog(`Unknown command: ${commandId}`, 'system');
+        }
+        toggleCommandPalette();
+    },
+    clearCommandPaletteAction: () => set({ commandPaletteAction: null }),
+    clearTriggerProjectDownload: () => set({ triggerProjectDownload: false }),
+    setExpandedMissionStep: (stepIndex) => set(state => ({
+        expandedMissionStep: state.expandedMissionStep === stepIndex ? null : stepIndex
+    })),
+    updateFirestoreProjectData: async (dataToUpdate) => {
+        const { db, userId, currentProjectId, addLog } = get(); // Added addLog
+        if (db && userId && currentProjectId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+            try {
+                await updateDoc(projectRef, dataToUpdate);
+                // addLog(`Project data updated in Firestore: ${Object.keys(dataToUpdate).join(', ')}`, 'system'); // Optional debug log
+            } catch (error) {
+                console.error("Failed to update project data in Firestore:", error);
+                addLog(`Firestore update failed for project ${currentProjectId}: ${error.message}`, 'error');
+            }
+        }
+     },
+    setAuthReady: (isAuthReady, userId) => set({ isAuthReady, userId, status: userId ? (get().apiKey ? 'IDLE' : 'AWAITING_KEY') : 'AWAITING_AUTH' }),
+    setApiKey: (apiKey) => {
+        set({ apiKey });
+        if (apiKey && get().status === 'AWAITING_KEY' && get().isAuthReady) {
+            set({ status: 'IDLE', currentTask: 'Ready. Provide a new project goal.' });
+        } else { set({ status: 'AWAITING_KEY', currentTask: 'Awaiting API Key.' }); }
+    },
+    loadProjects: (projects) => set({ projects }),
+    setCurrentProject: (projectId) => {
+        const project = get().projects.find(p => p.id === projectId);
+        if (project) {
+            const avatars = { 'Creative Maverick': <LucidePalette />, 'Data Architect': <LucideDatabase />, 'UI Specialist': <LucideComponent />, 'Generalist': <LucideBrainCircuit /> };
+            const projectIdentity = project.agentIdentity || get().agentIdentity; // Use project's identity or default
+            const reconstructedAgentIdentity = {
+                ...get().agentIdentity, // Start with default structure (like default avatar if not in project)
+                ...projectIdentity, // Override with project-specific identity fields
+                avatar: avatars[projectIdentity.persona] || <LucideBrainCircuit /> // Ensure avatar is React component
+            };
+
+            set(state => ({
+                currentProjectId: projectId,
+                prompt: project.prompt,
+                plan: project.plan,
+                projectFiles: project.projectFiles || {},
+                activeFile: Object.keys(project.projectFiles || {})[0] || 'index.html',
+                testResults: project.testResults,
+                reflections: project.reflections,
+                agentIdentity: reconstructedAgentIdentity,
+                missionControl: project.missionControl || { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+                logs: project.logs || [],
+                refinement: project.refinement || { isActive: false, questions: [], answers: [] },
+                status: project.status || 'IDLE',
+                currentTask: project.currentTask || 'Project loaded. Ready for instructions.',
+                manualRefinements: project.manualRefinements || "", // Ensure these are loaded
+                isManualRefinementActive: project.isManualRefinementActive || false, // Ensure these are loaded
+                stepSuggestions: project.stepSuggestions || {}, // Ensure these are loaded
+                currentGlobalInterventionNote: project.currentGlobalInterventionNote || "",
+                // Reset transient UI states for newly loaded project
+                errorRecoverySuggestions: [],
+                isAgentPaused: false,
+                isInterventionInputVisible: false,
+                interventionNoteInput: "",
+                focusedPanel: null,
+                commandPaletteAction: null,
+                triggerProjectDownload: false,
+                expandedMissionStep: null, // Also reset expanded mission step
+            }));
+        }
+    },
+    clearCurrentProject: () => set(state => ({
+        currentProjectId: null,
+        prompt: '',
+        plan: null,
+        projectFiles: {},
+        activeFile: 'index.html',
+        testResults: null,
+        reflections: null,
+        logs: [],
+        refinement: { isActive: false, questions: [], answers: [] },
+        goalAnalysis: null,
+        agentIdentity: { persona: 'Generalist', confidence: 0, avatar: <LucideComponent />, description: '', capabilities: [] }, // Reset to default identity
+        missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+        manualRefinements: "",
+        isManualRefinementActive: false,
+        stepSuggestions: {},
+        // Reset transient UI states
+        status: 'IDLE',
+        currentTask: 'Ready. Provide a new project goal.',
+        errorRecoverySuggestions: [],
+        isAgentPaused: false,
+        currentGlobalInterventionNote: "",
+        interventionNoteInput: "",
+        isInterventionInputVisible: false,
+        focusedPanel: null,
+        commandPaletteAction: null,
+        triggerProjectDownload: false,
+        expandedMissionStep: null,
+     })),
+    startProject: async (prompt) => {
+        if (!prompt || !get().apiKey) { return; }
+        const newProjectId = `proj_${Date.now()}`;
+
+        get().clearCurrentProject();
+
+        set({
+            prompt,
+            currentProjectId: newProjectId,
+            logs: [],
+            correction: { iteration: 0, maxIterations: 3 },
+        });
+
+        const { db, userId } = get();
+        if (db && userId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, newProjectId);
+            const { avatar, ...identityToSave } = get().agentIdentity;
+
+            const initialProjectData = {
+                id: newProjectId,
+                prompt,
+                createdAt: new Date().toISOString(),
+                status: 'REFINING',
+                logs: [],
+                agentIdentity: identityToSave,
+                missionControl: { steps: [], totalWorkUnits: 0, completedWorkUnits: 0, currentStepIndex: -1 },
+                projectFiles: {},
+                goalAnalysis: null,
+                plan: null,
+                testResults: null,
+                reflections: null,
+                manualRefinements: "",
+                isManualRefinementActive: false,
+                stepSuggestions: {},
+                currentGlobalInterventionNote: "",
+                refinement: { isActive: false, questions: [], answers: [] }, // Ensure refinement is initialized for new project
+            };
+
+            try {
+                await setDoc(projectRef, initialProjectData);
+                set({
+                    status: 'REFINING',
+                    currentTask: 'Assessing Goal & Adopting Persona...',
+                });
+                get().addLog(`New project started. ID: ${newProjectId}`, 'system');
+                get().addLog(`Initial Goal: ${prompt}`, 'user');
+            } catch (error) {
+                set({ status: 'ERROR', currentTask: 'Error creating new project in database.' });
+                console.error("Failed to create project document:", error);
+            }
+        } else {
+            set({ status: 'ERROR', currentTask: 'Database connection not ready.' });
+        }
+    },
+    addLog: (message, type = 'agent', data = null) => {
+      const persona = get().agentIdentity.persona;
+      const finalMessage = type === 'agent' ? `[${persona}]: ${message}` : message;
+      const newLog = { message: finalMessage, type, data, timestamp: new Date().toISOString() };
+      set(state => ({ logs: [...state.logs, newLog] }));
+      get().updateFirestoreLog();
+    },
+    updateFirestoreLog: () => {
+        const { db, userId, currentProjectId, logs } = get();
+        if (db && userId && currentProjectId) {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const projectRef = doc(db, `artifacts/${appId}/users/${userId}/projects`, currentProjectId);
+            updateDoc(projectRef, { logs }).catch(err => console.error("Failed to update logs in Firestore:", err));
+        }
+    },
+    setAgentIdentity: (identity) => {
+        const avatars = { 'Creative Maverick': <LucidePalette />, 'Data Architect': <LucideDatabase />, 'UI Specialist': <LucideComponent />, 'Generalist': <LucideBrainCircuit /> };
+        // Ensure newIdentity includes all fields from default agentIdentity, then overrides with provided identity
+        const currentAgentIdentity = get().agentIdentity;
+        const newIdentityData = {
+             ...currentAgentIdentity, // Start with default fields
+             ...identity, // Override with new data
+             avatar: avatars[identity.persona] || <LucideBrainCircuit /> // Set avatar based on new persona
+        };
+        set({ agentIdentity: newIdentityData });
+        get().addLog(`Persona adopted. Confidence in success: ${identity.confidence}%.`, 'system');
+    },
+    setRefinementQuestions: (questions) => {
+        if (questions?.length > 0) {
+            set({ refinement: { isActive: true, questions, answers: [] }, currentTask: 'Awaiting user input for clarification.' });
+        } else {
+            set({ refinement: { isActive: false, questions: [], answers: [] }, status: 'ANALYZING', currentTask: 'Analyzing refined goal...' });
+            get().addLog('Prompt is clear. Commencing deep goal analysis.', 'success');
+        }
+    },
+    submitRefinementAnswer: (answer) => {
+        set(state => {
+            const newAnswers = [...state.refinement.answers, answer];
+            const isDone = newAnswers.length === state.refinement.questions.length;
+            if (isDone) {
+                get().addLog('All clarifications received. Proceeding to analysis.', 'user');
+                return {
+                    refinement: { ...state.refinement, answers: newAnswers, isActive: false },
+                    status: 'ANALYZING', currentTask: 'Analyzing refined goal...'
+                };
+            }
+            return { refinement: { ...state.refinement, answers: newAnswers } };
+        });
+    },
+    setGoalAnalysis: (analysis) => {
+        set({ goalAnalysis: analysis, status: 'PLANNING', currentTask: 'Architecting Solution & Building Mission Plan...'});
+        get().addLog('Goal analysis complete. Proceeding to architectural planning.', 'success');
+    },
+    setMissionPlan: (plan) => {
+        const totalWorkUnits = plan.steps.reduce((acc, step) => acc + (step.time_estimate || 5), 0);
+        set({
+            plan,
+            missionControl: { steps: plan.steps.map(s => ({ ...s, status: 'pending', logIndex: -1 })), totalWorkUnits, completedWorkUnits: 0, currentStepIndex: -1 },
+            projectFiles: plan.files.reduce((acc, file) => ({...acc, [file]: ''}), {}),
+            activeFile: plan.files[0] || 'index.html',
+            status: 'CODING', currentTask: 'Executing Mission Plan...'
+        });
+        get().addLog('Mission plan locked in. Commencing code generation.', 'success');
+    },
+    updateMissionProgress: (stepIndex) => {
+        set(state => {
+            const newSteps = [...state.missionControl.steps];
+            let completedWorkUnits = state.missionControl.completedWorkUnits;
+
+            if(state.missionControl.currentStepIndex >= 0 && state.missionControl.currentStepIndex < newSteps.length) {
+                 newSteps[state.missionControl.currentStepIndex].status = 'complete';
+                 completedWorkUnits += newSteps[state.missionControl.currentStepIndex].time_estimate || 5;
+            }
+            if (stepIndex < newSteps.length) {
+                newSteps[stepIndex].status = 'in-progress';
+                newSteps[stepIndex].logIndex = get().logs.length;
+            }
+
+            return { missionControl: { ...state.missionControl, steps: newSteps, completedWorkUnits, currentStepIndex: stepIndex } };
+        });
+    },
+    setTestResults: (results) => set(state => {
+      if (results.issues?.length > 0) {
+          get().addLog(`Found ${results.issues.length} issues. Entering self-correction loop.`, 'system');
+          return { testResults: results, status: 'CORRECTING', currentTask: `Correcting code (Attempt ${state.correction.iteration + 1})` };
+      }
+      get().addLog('No issues found. Code passed audit.', 'success');
+      return { testResults: results, status: 'REFACTORING', currentTask: 'Finalizing & Documenting...' };
+    }),
+    setActiveFile: (fileName) => set({ activeFile: fileName }),
+    updateFileContent: (fileName, newContent, isAppending = false) => {
+        set(state => ({
+            projectFiles: { ...state.projectFiles, [fileName]: isAppending ? (state.projectFiles[fileName] || '') + newContent : newContent }
+        }));
+    },
+    completeCoding: () => set(state => {
+      get().addLog('Code generation complete for all files.', 'success');
+      get().updateMissionProgress(state.missionControl.steps.length);
+      return { status: 'TESTING', currentTask: 'Auditing & Testing Code...' };
+    }),
+    setCodeAndIterate: (newFiles) => set(state => {
+        get().addLog(`Applying corrections. Re-running tests.`, 'agent');
+        return {
+            projectFiles: newFiles, status: 'TESTING',
+            currentTask: `Re-testing code after corrections (Attempt ${state.correction.iteration + 1})`,
+            correction: { ...state.correction, iteration: state.correction.iteration + 1 }
+        };
+    }),
+    setReflections: (reflections) => set(state => {
+      get().addLog('Self-reflection complete.', 'success');
+      return { reflections, status: 'COMPLETED', currentTask: 'Mission Complete.' };
+    }),
+    updateStatus: (status, currentTask) => {
+        const oldStatus = get().status;
+        set({ status, currentTask });
+        if (status === 'ERROR' && oldStatus !== 'ERROR') {
+            get().generateErrorRecoverySuggestions(currentTask, get().logs);
+        } else if (status !== 'ERROR' && get().errorRecoverySuggestions.length > 0) {
+            set({ errorRecoverySuggestions: [] });
+        }
+    },
+    generateErrorRecoverySuggestions: async (currentTaskOnError, logs) => {
+        const { apiKey, addLog } = get();
+        let suggestions = [];
+        addLog(`Generating error recovery suggestions based on task: "${currentTaskOnError}"`, 'system');
+        const taskLower = currentTaskOnError?.toLowerCase() || "";
+
+        if (taskLower.includes('api key') || taskLower.includes('api communication failed') || taskLower.includes('gemini')) {
+            suggestions.push("Check your Gemini API Key: Is it valid and correctly entered?");
+            suggestions.push("Verify internet connection and firewall settings for Google APIs.");
+        }
+        if (taskLower.includes('planning failed') || taskLower.includes('understand plan')) {
+            suggestions.push("Project plan generation failed. Try simplifying your Project Goal.");
+            suggestions.push("Review Goal Analysis (Project Details tab) for AI's understanding.");
+        }
+        if (taskLower.includes('coding failed')) {
+            suggestions.push("Error during code generation. Check Agent Logs for specifics.");
+            suggestions.push("If after correction, consider simplifying the problematic part or a new project with refined goals.");
+        }
+        if (taskLower.includes('firestore') || taskLower.includes('database') || taskLower.includes('saving project') || taskLower.includes('create project document')) {
+            suggestions.push("Ensure Firebase project is set up, Firestore enabled, and security rules allow writes.");
+            suggestions.push("Check browser's developer console (F12) for Firebase/network errors.");
+        }
+         if (taskLower.includes('correction') && (taskLower.includes('parse') || taskLower.includes('understand test results'))) {
+            suggestions.push("AI struggled with correction/test results. Output might be complex.");
+        }
+        if (taskLower.includes('correction attempt failed to produce valid code')) {
+            suggestions.push("AI's code correction attempt was unsuccessful.");
+        }
+        if (taskLower.includes('could not fix code within retry limits')) {
+            suggestions.push("Max correction retries reached. Manual review or a new approach may be needed.");
+        }
+        if (suggestions.length === 0 && taskLower.includes('error')) {
+           suggestions.push("An unexpected error occurred. Please check Agent Logs.");
+        }
+        if (suggestions.length < 2) {
+           suggestions.push("Review Agent Logs for detailed error messages.");
+        }
+        if (suggestions.length < 3 && !taskLower.includes('api key')) {
+           suggestions.push("Try simplifying your prompt or the last instruction.");
+        }
+        const uniqueSuggestions = Array.from(new Set(suggestions));
+        set({ errorRecoverySuggestions: uniqueSuggestions.slice(0, 3) });
+        if (uniqueSuggestions.length > 0) {
+           addLog(`Generated ${uniqueSuggestions.length} recovery suggestion(s).`, 'system');
+        } else {
+           addLog(`No specific recovery suggestions generated for task: "${currentTaskOnError}"`, 'system');
+        }
+    },
     setInterventionNoteInput: (note) => set({ interventionNoteInput: note }),
     commitInterventionNote: () => set(state => {
         const noteToCommit = state.interventionNoteInput.trim();
@@ -176,6 +588,8 @@ const useGenieStore = create((set, get) => ({
                 currentGlobalInterventionNote: project.currentGlobalInterventionNote || "",
                 interventionNoteInput: "",
                 isInterventionInputVisible: false,
+                errorRecoverySuggestions: [],
+                focusedPanel: null,
             });
         }
     },
@@ -193,6 +607,8 @@ const useGenieStore = create((set, get) => ({
         currentGlobalInterventionNote: "",
         interventionNoteInput: "",
         isInterventionInputVisible: false,
+        errorRecoverySuggestions: [],
+        focusedPanel: null,
     })),
     startProject: async (prompt) => {
         if (!prompt || !get().apiKey) { return; }
@@ -364,12 +780,29 @@ const useGenieStore = create((set, get) => ({
       get().addLog('Self-reflection complete.', 'success');
       return { reflections, status: 'COMPLETED', currentTask: 'Mission Complete.' };
     }),
-    updateStatus: (status, currentTask) => set({ status, currentTask }),
+    updateStatus: (status, currentTask) => {
+        const oldStatus = get().status;
+        set({ status, currentTask });
+        if (status === 'ERROR' && oldStatus !== 'ERROR') {
+            get().generateErrorRecoverySuggestions(currentTask, get().logs);
+        } else if (status !== 'ERROR' && get().errorRecoverySuggestions.length > 0) {
+            set({ errorRecoverySuggestions: [] });
+        }
+    },
     toggleLogFilter: (filterKey) => set(state => ({
         logFilter: { ...state.logFilter, [filterKey]: !state.logFilter[filterKey] }
     })),
     setTheme: (theme) => set({ theme }),
-}));
+        }),
+        {
+            name: 'genie-ui-settings', // Name for the localStorage item
+            partialize: (state) => ({
+                theme: state.theme,
+                logFilter: state.logFilter
+            }), // Specify which parts of the state to persist
+        }
+    )
+);
 
 // --- ERROR BOUNDARY COMPONENT ---
 class ErrorBoundary extends React.Component {
@@ -392,7 +825,7 @@ class ErrorBoundary extends React.Component {
 // --- REACT COMPONENTS (v2.8) ---
 
 const App = () => {
-    const { status, initializeFirebase, setAuthReady, isAuthReady, currentProjectId, theme, toggleCommandPalette } = useGenieStore();
+    const { status, initializeFirebase, setAuthReady, isAuthReady, currentProjectId, theme, toggleCommandPalette, focusedPanel } = useGenieStore();
     const orchestratorRunning = useRef(false);
 
     useEffect(() => {
@@ -518,24 +951,43 @@ const App = () => {
         }
     };
 
+    const isControlFocused = focusedPanel === 'control';
+    const isWorkspaceFocused = focusedPanel === 'workspace';
+    const isPreviewFocused = focusedPanel === 'preview';
+    const noFocus = focusedPanel === null;
+
     return (
         <div className={`bg-gradient-to-br ${getStatusBackground()} text-gray-100 font-sans h-screen flex flex-col antialiased transition-all duration-1000 ${theme}`}>
             <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
             <ErrorBoundary><Header /></ErrorBoundary>
             <div className="flex-grow flex flex-col p-4 gap-4 overflow-hidden">
                 <ErrorBoundary><MissionControl /></ErrorBoundary>
-                <main className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-hidden">
-                    <div className="lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
-                       <ErrorBoundary><ControlPanel /></ErrorBoundary>
-                       <ErrorBoundary><ProjectManager /></ErrorBoundary>
-                    </div>
-                    <div className="lg:col-span-5 flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10">
-                        <ErrorBoundary><Workspace /></ErrorBoundary>
-                    </div>
-                    <div className="lg:col-span-4 flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10">
-                        <ErrorBoundary><IntegratedPreviewPanel /></ErrorBoundary>
-                    </div>
-                    <RefinementModal />
+                <main className={`flex-grow grid grid-cols-1 ${noFocus ? 'lg:grid-cols-12' : 'lg:grid-cols-1'} gap-4 overflow-hidden`}> {/* lg:grid-cols-1 if focus */}
+                    {/* Left Column (ControlPanel, ProjectManager) */}
+                    {(noFocus || isControlFocused) && (
+                       <div className={`flex flex-col gap-4 overflow-y-auto ${noFocus ? 'lg:col-span-3' : 'col-span-1'}`}>
+                           <ErrorBoundary><ControlPanel panelId="control" /></ErrorBoundary>
+                           <ErrorBoundary><ProjectManager /></ErrorBoundary>
+                       </div>
+                   )}
+
+                   {/* Center Column (Workspace) */}
+                   {(noFocus || isWorkspaceFocused) && (
+                       <div className={`flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10 ${noFocus ? 'lg:col-span-5' : 'col-span-1'}`}>
+                           <ErrorBoundary><Workspace panelId="workspace" /></ErrorBoundary>
+                       </div>
+                   )}
+
+                   {/* Right Column (IntegratedPreviewPanel) */}
+                   {(noFocus || isPreviewFocused) && (
+                       <div className={`flex flex-col bg-black/30 backdrop-blur-sm rounded-lg shadow-inner overflow-hidden border border-white/10 ${noFocus ? 'lg:col-span-4' : 'col-span-1'}`}>
+                           <ErrorBoundary><IntegratedPreviewPanel panelId="preview" /></ErrorBoundary>
+                       </div>
+                   )}
+
+                   {/* Modals remain outside this conditional rendering for focus */}
+                   <RefinementModal />
+                   {/* SuggestionModal, InterventionNoteModal, CommandPalette were here, ensuring they are still rendered */}
                 </main>
             </div>
             <ErrorBoundary><StatusBar /></ErrorBoundary>
@@ -557,6 +1009,8 @@ const App = () => {
             `}</style>
             <CommandPalette />
             <InterventionNoteModal />
+            {/* Ensure SuggestionModal is also here if it's a global modal like others */}
+            <SuggestionModal />
         </div>
     );
 };
@@ -714,15 +1168,22 @@ const SuggestionModal = () => {
     );
 };
 
-const Workspace = () => {
+const Workspace = (props) => { // Accept props
     const [activeTab, setActiveTab] = useState('logs');
-    const { status, activeFile, projectFiles, commandPaletteAction, clearCommandPaletteAction } = useGenieStore(state => ({ // Added commandPalette related state
+    const {
+        status, activeFile, projectFiles, commandPaletteAction, clearCommandPaletteAction,
+        toggleFocusedPanel, focusedPanel
+    } = useGenieStore(state => ({
         status: state.status,
         activeFile: state.activeFile,
         projectFiles: state.projectFiles,
         commandPaletteAction: state.commandPaletteAction,
-        clearCommandPaletteAction: state.clearCommandPaletteAction
+        clearCommandPaletteAction: state.clearCommandPaletteAction,
+        toggleFocusedPanel: state.toggleFocusedPanel,
+        focusedPanel: state.focusedPanel
     }));
+    const { panelId } = props; // Destructure panelId
+    const isFocused = focusedPanel === panelId;
     const showGoalAnalysis = status !== 'IDLE' && status !== 'AWAITING_KEY' && status !== 'AWAITING_AUTH';
 
     useEffect(() => { // For "View Code" from Mission Control or direct file selection
@@ -759,8 +1220,8 @@ const Workspace = () => {
 
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20">
-                <nav className="-mb-px flex space-x-2" aria-label="Tabs">
+            <div className="flex-shrink-0 border-b border-white/10 px-2 bg-black/20 flex items-center justify-between">
+                <nav className="-mb-px flex space-x-2 overflow-x-auto" aria-label="Tabs"> {/* Added overflow-x-auto */}
                     <button onClick={() => setActiveTab('logs')} className={tabButtonStyle('logs')}>
                         <LucideTerminal size={16} /> Agent Logs
                     </button>
@@ -773,6 +1234,14 @@ const Workspace = () => {
                         <LucideFileCode size={16} /> Code Forge
                     </button>
                 </nav>
+                <Tooltip text={isFocused ? "Exit Focus Mode" : "Focus Workspace"}>
+                    <button
+                        onClick={() => toggleFocusedPanel(panelId)}
+                        className="p-1.5 hover:bg-white/20 rounded mr-1 flex-shrink-0" // Added flex-shrink-0
+                    >
+                        {isFocused ? <LucideMinimize2 size={14} /> : <LucideMaximize2 size={14} />}
+                    </button>
+                </Tooltip>
             </div>
             {activeTab === 'logs' && <LogsPanel />}
             {activeTab === 'analysis' && <GoalAnalysisPanel />}
@@ -851,8 +1320,9 @@ const AgentIdentity = () => {
     );
 };
 
-const ControlPanel = () => {
-    const { apiKey, setApiKey, prompt, status, startProject, clearCurrentProject } = useGenieStore();
+const ControlPanel = ({ panelId }) => {
+    const { apiKey, setApiKey, prompt, status, startProject, clearCurrentProject, toggleFocusedPanel, focusedPanel } = useGenieStore();
+    const isFocused = focusedPanel === panelId;
     const [localPrompt, setLocalPrompt] = useState(prompt);
     const [isApiKeyPotentiallyInvalid, setIsApiKeyPotentiallyInvalid] = useState(false);
 
@@ -869,7 +1339,14 @@ const ControlPanel = () => {
     const isRunning = !['IDLE', 'COMPLETED', 'ERROR', 'AWAITING_KEY', 'AWAITING_AUTH'].includes(status);
 
     return (
-        <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 flex flex-col gap-4 p-4">
+        <div className="bg-black/30 backdrop-blur-sm rounded-lg shadow-lg border border-white/10 flex flex-col gap-4 p-4 relative">
+            <div className="absolute top-2 right-2">
+                <Tooltip text={isFocused ? "Exit Focus Mode" : "Focus Control Panel"}>
+                    <button onClick={() => toggleFocusedPanel(panelId)} className="p-1 hover:bg-white/20 rounded">
+                        {isFocused ? <LucideMinimize2 size={14} /> : <LucideMaximize2 size={14} />}
+                    </button>
+                </Tooltip>
+            </div>
             <AgentIdentity />
             <h2 className="font-bold text-lg flex items-center gap-2 border-t border-white/10 pt-4"><LucideShield className="text-green-400"/>Configuration</h2>
             <div className="flex flex-col gap-1">
@@ -1182,9 +1659,16 @@ const LiveCodePanel = () => {
 };
 
 
-const IntegratedPreviewPanel = () => {
+const IntegratedPreviewPanel = (props) => { // Accept props
     const files = useGenieStore(state => state.projectFiles);
     const status = useGenieStore(state => state.status);
+    const { toggleFocusedPanel, focusedPanel } = useGenieStore(state => ({
+        toggleFocusedPanel: state.toggleFocusedPanel,
+        focusedPanel: state.focusedPanel
+    }));
+    const { panelId } = props; // Destructure panelId
+    const isFocused = focusedPanel === panelId;
+
     const [previewContent, setPreviewContent] = useState('');
     const [previewError, setPreviewError] = useState(null);
     const iframeRef = useRef(null);
@@ -1256,10 +1740,20 @@ const IntegratedPreviewPanel = () => {
 
     return (
         <div className="w-full h-full flex flex-col relative">
-            <h2 className="text-lg font-bold p-3 border-b border-white/10 flex-shrink-0 bg-black/20">Integrated Preview</h2>
+            <div className="flex items-center justify-between p-3 border-b border-white/10 flex-shrink-0 bg-black/20">
+                <h2 className="text-lg font-bold">Integrated Preview</h2>
+                <Tooltip text={isFocused ? "Exit Focus Mode" : "Focus Preview"}>
+                    <button
+                        onClick={() => toggleFocusedPanel(panelId)}
+                        className="p-1 hover:bg-white/20 rounded flex-shrink-0"
+                    >
+                        {isFocused ? <LucideMinimize2 size={14} /> : <LucideMaximize2 size={14} />}
+                    </button>
+                </Tooltip>
+            </div>
             {previewError && (
                 <div
-                    className="absolute top-12 left-2 right-2 z-10 p-3 bg-red-700/90 text-white rounded-md shadow-lg border border-red-900"
+                    className="absolute top-12 left-2 right-2 z-10 p-3 bg-red-700/90 text-white rounded-md shadow-lg border border-red-900" // Ensure top-12 is still appropriate or adjust if header height changed
                     onClick={() => setPreviewError(null)}
                     style={{ maxHeight: '30%', overflowY: 'auto' }}
                 >
@@ -1322,7 +1816,7 @@ const RefinementModal = () => {
 };
 
 const StatusBar = () => {
-    const { status, currentTask, userId, isAgentPaused, toggleAgentPause } = useGenieStore();
+    const { status, currentTask, userId, isAgentPaused, toggleAgentPause, errorRecoverySuggestions } = useGenieStore();
     const activeStates = ['REFINING', 'ANALYZING', 'PLANNING', 'CODING', 'TESTING', 'CORRECTING', 'REFACTORING'];
     const canPause = activeStates.includes(status);
 
@@ -1336,15 +1830,28 @@ const StatusBar = () => {
             default: return <LucideLoader className="animate-spin text-primary" size={16} />;
         }
     };
+
+    const handleSuggestionClick = (suggestion) => {
+        // Potentially copy to clipboard or trigger another action
+        console.log("Suggestion clicked:", suggestion);
+        // As an example, let's copy to clipboard
+        navigator.clipboard.writeText(suggestion).then(() => {
+            useGenieStore.getState().addLog(`Suggestion copied: "${suggestion}"`, 'system');
+        }).catch(err => {
+            useGenieStore.getState().addLog(`Failed to copy suggestion: ${err.message}`, 'error');
+        });
+    };
+
     return (
-        <footer className="flex items-center justify-between p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0 flex-wrap sm:flex-nowrap gap-y-1">
-            <div className="flex items-center gap-2">
-                {getStatusIndicator()}
-                <span className="truncate max-w-[calc(100vw-200px)] sm:max-w-none">{isAgentPaused && canPause ? "Paused: " + currentTask : currentTask}</span>
-            </div>
-            <div className="flex items-center gap-x-2">
-                 {canPause && (
-                    <Tooltip text={isAgentPaused ? "Resume Agent" : "Pause Agent"}>
+        <footer className="flex flex-col p-2 border-t border-white/10 text-xs bg-black/20 backdrop-blur-sm flex-shrink-0">
+            <div className="flex items-center justify-between w-full flex-wrap sm:flex-nowrap gap-y-1">
+                <div className="flex items-center gap-2">
+                    {getStatusIndicator()}
+                    <span className="truncate max-w-[calc(100vw-200px)] sm:max-w-none">{isAgentPaused && canPause ? "Paused: " + currentTask : currentTask}</span>
+                </div>
+                <div className="flex items-center gap-x-2">
+                    {canPause && (
+                        <Tooltip text={isAgentPaused ? "Resume Agent" : "Pause Agent"}>
                         <button onClick={toggleAgentPause} className="p-1 hover:bg-white/20 rounded">
                             {isAgentPaused ? <LucidePlay size={14} className="text-green-400" /> : <LucidePause size={14} className="text-yellow-400" />}
                         </button>
@@ -1366,6 +1873,29 @@ const StatusBar = () => {
                 )}
                 {userId && <div className="font-mono text-gray-500 text-nowrap">UserID: {userId}</div>}
             </div>
+            </div>
+            {status === 'ERROR' && errorRecoverySuggestions && errorRecoverySuggestions.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-red-500/30 w-full"> {/* Subtle border color change for error context */}
+                    <p className="text-xs font-semibold text-yellow-300 mb-1 flex items-center gap-1.5">
+                        <LucideWand2 size={12}/>Recovery Suggestions:
+                    </p>
+                    <ul className="list-disc list-inside space-y-0.5 pl-1">
+                        {errorRecoverySuggestions.map((suggestion, index) => (
+                            <li
+                                key={index}
+                                className="text-xs text-yellow-200/90 cursor-pointer hover:text-yellow-100"
+                                onClick={() => {
+                                    navigator.clipboard.writeText(suggestion);
+                                    useGenieStore.getState().addLog(`Copied suggestion: "${suggestion}"`, 'system');
+                                }}
+                                title="Click to copy suggestion"
+                            >
+                                {suggestion}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
         </footer>
     );
 };
@@ -1469,93 +1999,129 @@ const CommandPalette = () => {
 };
 
 const callGeminiAPI = async (promptText, apiKey, isJson = false) => {
-    const { addLog, apiRetryConfig, updateStatus: updateAgentStatus, status: currentStatus, currentGlobalInterventionNote, clearCurrentGlobalInterventionNote, updateFirestoreProjectData } = useGenieStore.getState();
+    const {
+        addLog,
+        apiRetryConfig,
+        updateStatus: updateAgentStatus, // Renamed for clarity within this function
+        status: currentSystemStatus, // Original system status before API call
+        currentGlobalInterventionNote,
+        clearCurrentGlobalInterventionNote,
+        updateFirestoreProjectData
+    } = useGenieStore.getState();
 
     let finalPromptText = promptText;
+
+    // Prepend intervention note if available
     if (currentGlobalInterventionNote && currentGlobalInterventionNote.trim() !== "") {
-        finalPromptText = `User's Mid-Process Guidance (consider for this task):
+        finalPromptText = `User's Mid-Process Guidance (IMPORTANT: Consider this for the current task):
+"""
 ${currentGlobalInterventionNote}
+"""
 
 ---
 
-Original Prompt:
+Original Task/Prompt:
 ${promptText}`;
-        addLog('Prepending user intervention note to current API call.', 'system', {note: currentGlobalInterventionNote});
+        addLog('Prepending user intervention note to current API call.', 'system', { note: currentGlobalInterventionNote });
+        // Clear the note from state and Firestore immediately after preparing it for the prompt
         clearCurrentGlobalInterventionNote();
         updateFirestoreProjectData({ currentGlobalInterventionNote: "" });
     }
 
-    updateAgentStatus(currentStatus, 'Waiting for Gemini API response...');
+    // Update status to indicate waiting for API, preserving the broader system status
+    updateAgentStatus(currentSystemStatus, 'Waiting for Gemini API response...');
     addLog(`Sending request to Gemini API... (isJson: ${isJson})`, 'tool', { promptLength: finalPromptText.length });
 
     let retries = 0;
     while (retries <= apiRetryConfig.maxRetries) {
         try {
-            const payload = { contents: [{ role: "user", parts: [{ text: finalPromptText }] }] }; // Use finalPromptText
+            const payload = { contents: [{ role: "user", parts: [{ text: finalPromptText }] }] };
+
+            // For Gemini 1.5 Flash, if `isJson` is true, we expect the model to output a JSON string.
+            // We set responseMimeType to "application/json" to enforce this.
             if (isJson) {
                 payload.generationConfig = { responseMimeType: "application/json" };
             }
+
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if (!response.ok) {
                 const errorBodyText = await response.text();
+                // Check for retryable errors specifically.
                 if ((response.status === 429 || response.status >= 500) && retries < apiRetryConfig.maxRetries) {
                     throw new Error(`RetryableAPIError: ${response.status} ${response.statusText} - ${errorBodyText}`);
                 }
+                // For non-retryable errors, throw immediately.
                 throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBodyText}`);
             }
 
-            const result = await response.json();
+            const result = await response.json(); // Always expect JSON from the fetch operation itself.
+
+            // Now, handle the content within the response.
+            const candidate = result.candidates?.[0];
+            if (!candidate || !candidate.content || !candidate.content.parts || !candidate.content.parts[0] || typeof candidate.content.parts[0].text !== 'string') {
+                 throw new Error(`Invalid response structure from Gemini API: ${JSON.stringify(result)}`);
+            }
+
+            const responseText = candidate.content.parts[0].text;
 
             if (isJson) {
-                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    const jsonText = result.candidates[0].content.parts[0].text;
-                    addLog(`Received JSON string from Gemini API, parsing...`, 'tool', { length: jsonText.length });
-                    return JSON.parse(jsonText);
-                } else {
-                    addLog(`Received direct JSON object or unexpected structure from Gemini API (isJson=true).`, 'tool', { result });
-                    return result;
+                // If we requested JSON, attempt to parse the text.
+                // The API should already have returned a JSON string due to responseMimeType.
+                try {
+                    const parsedJson = JSON.parse(responseText);
+                    addLog(`Received and parsed JSON response from Gemini API.`, 'tool', { length: responseText.length });
+                    updateAgentStatus(currentSystemStatus, currentSystemStatus); // Restore original task message
+                    return parsedJson;
+                } catch (e) {
+                    throw new Error(`Failed to parse JSON response from Gemini API: ${e.message}. Response text: ${responseText}`);
                 }
             } else {
-                if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    const text = result.candidates[0].content.parts[0].text;
-                    addLog(`Received text response from Gemini API.`, 'tool', { length: text.length });
-                    return text;
-                } else {
-                    throw new Error(`Invalid or empty text response structure from Gemini API: ${JSON.stringify(result)}`);
-                }
+                // If plain text was expected.
+                addLog(`Received text response from Gemini API.`, 'tool', { length: responseText.length });
+                updateAgentStatus(currentSystemStatus, currentSystemStatus); // Restore original task message
+                return responseText;
             }
+
         } catch (error) {
             if (error.message.startsWith('RetryableAPIError') && retries < apiRetryConfig.maxRetries) {
                 retries++;
-                const delay = Math.pow(2, retries) * apiRetryConfig.initialDelayMs; // Exponential backoff with increased base delay
+                const delay = Math.pow(2, retries) * apiRetryConfig.initialDelayMs;
                 addLog(`API Error (${error.message.split('-')[0].trim()}). Retrying attempt ${retries}/${apiRetryConfig.maxRetries} in ${delay}ms...`, 'system', { errorMessage: error.message });
+                // Before retrying, restore the broader system status and task message
+                updateAgentStatus(currentSystemStatus, `Retrying API call (${retries}/${apiRetryConfig.maxRetries})...`);
                 await new Promise(res => setTimeout(res, delay));
             } else {
-                addLog(`Error interacting with Gemini: ${error.message}`, 'error', { promptLength: promptText.length, finalAttempt: retries + 1 });
-                updateAgentStatus('ERROR', 'API communication failed.');
-                return null;
+                // For non-retryable errors or if max retries are exhausted.
+                addLog(`Error interacting with Gemini: ${error.message}`, 'error', { promptLength: finalPromptText.length, finalAttempt: retries + 1 });
+                updateAgentStatus('ERROR', 'API communication failed.'); // Set error status
+                return null; // Indicate failure
             }
         }
     }
-    addLog('API call failed after maximum retries.', 'error', { promptLength: promptText.length });
+    // This part is reached if all retries fail.
+    addLog('API call failed after maximum retries.', 'error', { promptLength: finalPromptText.length });
     updateAgentStatus('ERROR', 'API call failed after max retries.');
     return null;
 };
 
 const runRefinementPhase = async (state) => {
     const { addLog, setAgentIdentity, setRefinementQuestions, prompt, apiKey } = useGenieStore.getState();
+    // The 'prompt' variable here already includes manual refinements if they were added.
+    // For clarity, let's use a variable that reflects this, though no functional change here.
+    const combinedPrompt = prompt;
     addLog('Analyzing initial prompt to determine persona and clarity.', 'agent');
 
-    const llmPrompt = `You are a project manager AI. Analyze the user's project goal.
-    1.  Adopt a persona best suited for this task from this list: ['Creative Maverick', 'UI Specialist', 'Data Architect', 'Generalist'].
-    2.  Assess your confidence in achieving the goal on a scale of 0-100.
-    3.  If the goal is ambiguous, formulate up to 3 clarifying questions to ask the user. If the goal is clear, provide an empty array for questions.
+    const llmPrompt = `You are a project manager AI. Analyze the provided "User Goal" which may include initial goals and additional user guidance.
+    Your tasks are:
+    1.  Select the most suitable agent "persona" from this exact list: ['Creative Maverick', 'UI Specialist', 'Data Architect', 'Generalist'].
+    2.  Determine a "confidence" score (integer, 0-100) representing your ability to fulfill the goal.
+    3.  If the goal is unclear or ambiguous, provide an array of up to 3 "questions" (strings) for the user. If the goal is clear, provide an empty array for "questions".
 
-    User Goal: "${prompt}"
+    User Goal: "${combinedPrompt}"
 
-    Return a single JSON object with the keys "persona", "confidence", and "questions".`;
+    Respond with a single, valid JSON object containing only the keys: "persona" (string), "confidence" (integer), and "questions" (array of strings).`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
@@ -1569,20 +2135,22 @@ const runAnalysisPhase = async (state) => {
     const { addLog, setGoalAnalysis, prompt, refinement, apiKey } = useGenieStore.getState();
     addLog('Performing deep analysis of the refined project goal.', 'agent');
 
-    let refinedPrompt = `Initial Goal: ${prompt}`;
+    let fullPrompt = `Initial Goal: ${prompt}`; // Renamed for clarity
     if (refinement.answers.length > 0) {
         const qaPairs = refinement.questions.map((q, i) => `Q: ${q}\nA: ${refinement.answers[i]}`).join('\n\n');
-        refinedPrompt += `\n\nUser Clarifications:\n${qaPairs}`;
+        fullPrompt += `\n\nUser Clarifications:\n${qaPairs}`;
     }
 
-    const llmPrompt = `You are a requirements analyst AI. Based on the user's goal and clarifications, break down the project.
-    1.  Determine the core user "intent".
-    2.  List the key "entities" or "features" needed.
-    3.  Suggest a stack of "technologies" (e.g., React, Tailwind CSS).
+    const llmPrompt = `You are a requirements analyst AI. Analyze the following "Project Brief".
+    Your tasks are to:
+    1.  Determine the core user "intent" (a concise sentence).
+    2.  List the key "entities" or "features" as an array of strings.
+    3.  Suggest a stack of web "technologies" appropriate for the project, as an array of strings (e.g., ["React", "Tailwind CSS", "Firebase"]).
 
-    Project Brief:\n${refinedPrompt}
+    Project Brief:
+    ${fullPrompt}
 
-    Return a single JSON object with "intent", "entities", and "technologies".`;
+    Respond with a single, valid JSON object containing only the keys: "intent" (string), "entities" (array of strings), and "technologies" (array of strings).`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
@@ -1592,8 +2160,7 @@ const runAnalysisPhase = async (state) => {
 };
 
 const runPlanningPhase = async (state) => {
-    const { addLog, setMissionPlan, goalAnalysis, apiKey, agentIdentity, updateStatus, updateFirestoreProjectData } = useGenieStore.getState();
-    // Refined task message
+    const { addLog, setMissionPlan, goalAnalysis, apiKey, agentIdentity, prompt, refinement, updateStatus, updateFirestoreProjectData } = useGenieStore.getState();
     updateStatus(useGenieStore.getState().status, 'Generating detailed mission plan...');
     addLog('Architecting solution and generating a step-by-step mission plan.', 'agent');
 
@@ -1603,19 +2170,37 @@ const runPlanningPhase = async (state) => {
         return;
     }
 
-    const llmPrompt = `You are a senior software architect AI. Create a detailed execution plan for a web application.
+    // Construct fullPrompt including original prompt, manual refinements (if any in 'prompt'), and Q&A
+    let fullPrompt = `Original Goal: ${prompt}`; // 'prompt' from store might contain manual refinements
+    if (refinement.answers.length > 0) {
+        const qaPairs = refinement.questions.map((q, i) => `Q: ${q}\nA: ${refinement.answers[i]}`).join('\n\n');
+        fullPrompt += `\n\nUser Clarifications:\n${qaPairs}`;
+    }
+
+    // capabilitiesContext would be defined here if it were part of a previous step's implementation for this phase.
+    // For now, as it's not in v2.8, we'll just use persona.
+    // const capabilitiesContext = agentIdentity.capabilities ? `My capabilities include: ${agentIdentity.capabilities.join(', ')}.` : "";
+
+    const llmPrompt = `You are a senior software architect AI, operating with the persona of a "${agentIdentity.persona}".
+    Your task is to create a comprehensive technical execution plan for a web application based on the following "Analysis Details" and "Project Goal Context".
 
     Analysis Details:
     - Intent: ${goalAnalysis.intent}
-    - Features: ${goalAnalysis.entities.join(', ')}
-    - Tech Stack: ${goalAnalysis.technologies.join(', ')}
+    - Key Features: ${goalAnalysis.entities.join(', ')}
+    - Suggested Technologies: ${goalAnalysis.technologies.join(', ')}
 
-    Instructions:
-    1.  Define the necessary file structure ("files"). Create 'index.html', 'style.css', and 'script.js'.
-    2.  Create a series of "steps", where each step is a specific, atomic task for the coding agent.
-    3.  For each step, provide a "description", the target "file", a "time_estimate" (work unit, 1-10), and a detailed "prompt" for the coding agent to generate the code for that specific step. The "prompt" for each step must be self-contained and tell the coder EXACTLY what to write.
+    Project Goal Context:
+    ${fullPrompt}
 
-    Return a single JSON object with "files" and "steps".`;
+    Instructions for the Plan:
+    1.  "files": Define an array of strings for all necessary filenames. Minimally, include "index.html", "style.css", and "script.js".
+    2.  "steps": Create an array of objects, where each object represents a specific, atomic coding task. Each step object MUST contain:
+        - "file" (string): The target filename for this step's code.
+        - "description" (string): A concise summary of what this coding step achieves.
+        - "time_estimate" (integer): An estimated work unit (typically 1-10).
+        - "prompt" (string): A detailed, self-contained instruction for a separate coding AI. This prompt must tell the coding AI *exactly* what code to write for this specific step and file, including any necessary links or boilerplate if it's the first step for that file (e.g., HTML structure, CSS resets, JS function shells).
+
+    Respond with a single, valid JSON object containing only the keys: "files" (array of strings) and "steps" (array of step objects as described).`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
@@ -1657,7 +2242,32 @@ const runCodingPhase = async (state) => {
             addLog(`Skipping step: "${step.description}" due to missing or invalid sub-prompt.`, 'error');
             continue;
         }
-        const code = await callGeminiAPI(step.prompt, apiKey, false);
+
+        // Construct the context of other files for the coding agent
+        const projectFilesState = useGenieStore.getState().projectFiles;
+        const otherFilesContext = Object.entries(projectFilesState)
+            .filter(([name, content]) => name !== step.file && content.trim() !== "")
+            .map(([name, content]) => `You have already generated this content for "${name}":\n\`\`\`\n${content}\n\`\`\``)
+            .join('\n\n');
+
+        const agentPersona = useGenieStore.getState().agentIdentity.persona;
+        // capabilitiesContext would be constructed here if available and relevant for coding steps.
+        // const capabilitiesContext = agentIdentity.capabilities ? `Relevant capabilities: ${agentIdentity.capabilities.join(', ')}.` : "";
+
+        const codingLLMPrompt = `You are an expert software developer, operating with the persona of a "${agentPersona}".
+Your current task is to write the code for the file "${step.file}".
+${otherFilesContext ? `\nFor context, here is code you (or another agent) have already generated for other files in this project:\n${otherFilesContext}` : ''}
+
+Your specific instruction for this step, which you must follow precisely, is:
+"${step.prompt}"
+
+Based on this, write ONLY the raw code block required for "${step.file}" for this step.
+- If you are writing HTML, ensure you link to "style.css" and "script.js" correctly if they are part of the project plan (usually in the <head> for CSS and near the end of <body> for JS).
+- Do not include any explanations, comments that are not part of the code itself, or markdown formatting (like \`\`\`html or \`\`\`javascript).
+- Output only the code. For example, if asked for a CSS class, output only ".my-class { color: red; }". If asked for an HTML button, output only "<button>Click Me</button>".
+`;
+
+        const code = await callGeminiAPI(codingLLMPrompt, apiKey, false);
 
         if (code) {
             // The API might wrap code in markdown, so we clean it.
@@ -1687,18 +2297,23 @@ const runTestingPhase = async (state) => {
     addLog('Auditing generated code for potential issues.', 'agent');
 
     const filesPayload = JSON.stringify(projectFiles);
+    const agentPersona = agentIdentity.persona; // Get persona from agentIdentity
 
-    const llmPrompt = `You are a QA testing AI. Analyze the following code files for issues.
+    const llmPrompt = `You are a meticulous QA Engineer AI, operating with the persona of a "${agentPersona}".
+    Analyze the following project files for issues. Your goal is to ensure code quality, correctness, and adherence to best practices.
 
-    Files:
-    ${filesPayload}
+    Project Files:
+    ${filesPayload} // JSON string of project files
 
     Instructions:
-    1.  Review the code for syntax errors, logical bugs, broken references (e.g., an HTML element using a CSS class that doesn't exist), and potential improvements.
-    2.  If you find any issues, list them. If not, return an empty array.
+    1.  Thoroughly review all provided code.
+    2.  Identify syntax errors, logical bugs, inconsistencies (e.g., unlinked CSS classes, undefined functions), and areas for potential improvement or deviation from best practices.
+    3.  For each distinct issue found, provide a concise description, the affected file, and a concrete suggestion for fixing it.
+    4.  If NO issues are found, the "issues" array MUST be empty.
 
-    Return a single JSON object with an "issues" key, which is an array of objects. Each issue object should have "file", "description", and "suggestion".
-    Example: { "issues": [{ "file": "script.js", "description": "The 'updateData' function is called but never defined.", "suggestion": "Define the updateData function or remove the call to it." }] }`;
+    Respond with a single, valid JSON object containing only an "issues" key. The value of "issues" must be an array of objects, where each object has "file" (string), "description" (string), and "suggestion" (string).
+    Example of no issues: {"issues": []}
+    Example with issues: {"issues": [{ "file": "script.js", "description": "The 'updateData' function is called but never defined.", "suggestion": "Define the updateData function or remove its call." }]}`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
@@ -1731,6 +2346,7 @@ const runCorrectionPhase = async (state) => {
 
     const filesPayload = JSON.stringify(projectFiles);
     const issuesPayload = JSON.stringify(testResults.issues);
+    const agentPersona = agentIdentity.persona; // Get persona
 
     let suggestionsContext = "";
     if (stepSuggestions && Object.keys(stepSuggestions).length > 0) {
@@ -1748,23 +2364,27 @@ const runCorrectionPhase = async (state) => {
             suggestionsContext = `
 
 User Suggestions to Consider During Correction (may or may not be directly related to the issue list, but apply to affected files):
-- ${relevantSuggestionsTexts.join('
-- ')}`;
+- ${relevantSuggestionsTexts.join('\n- ')}`; // Ensure joiner is correct for multi-line
         }
     }
 
-    const llmPrompt = `You are a senior developer AI. You are tasked with fixing bugs in the provided code.
+    const llmPrompt = `You are a senior software developer AI, operating as a "${agentPersona}". Your task is to fix the specified issues in the provided code files.
 
     Current Code Files:
-    ${filesPayload}
+    ${filesPayload} // JSON string of project files
 
-    Issues to Fix:
-    ${issuesPayload}${suggestionsContext}
+    Identified Issues to Fix:
+    ${issuesPayload} // JSON string of issues array
+    ${suggestionsContext} // User suggestions context, if any
 
     Instructions:
-    1.  Carefully review each issue and the corresponding code.
-    2.  Rewrite the AFFECTED FILES COMPLETELY with the fixes applied. Do not just provide snippets.
-    3.  Return a single JSON object where keys are the filenames (e.g., "index.html") and values are the complete, corrected code for that file as a string. Only include files that were changed.`;
+    1.  Carefully review each issue in the "Issues to Fix" list and analyze the relevant code in "Current Code Files".
+    2.  Consider any "User Suggestions" provided, if relevant to the issues.
+    3.  Rewrite the AFFECTED FILES in their entirety, incorporating all necessary corrections for the identified issues.
+    4.  Ensure your fixes are robust and don't introduce new problems.
+    5.  Respond with a single, valid JSON object. The keys of this object should be the filenames of ONLY the files you have modified. The value for each key should be the complete, corrected code for that file as a string. If no files need changes (e.g., issues were misinterpreted or cannot be fixed without more info), return an empty JSON object {}.
+
+    Example: {"index.html": "<!DOCTYPE html>...", "script.js": "console.log('fixed');"}`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
@@ -1788,17 +2408,21 @@ const runReflectionPhase = async (state) => {
     const { addLog, setReflections, prompt, projectFiles, apiKey, updateFirestoreProjectData, updateStatus } = useGenieStore.getState();
     updateStatus(useGenieStore.getState().status, 'Generating final project reflection...');
     addLog('Code is complete and tested. Performing final reflection.', 'agent');
+    const agentPersona = agentIdentity.persona; // Get persona
 
-    const llmPrompt = `You are a project lead AI. The project is complete. Reflect on the process.
+    const llmPrompt = `You are a project lead AI, operating as a "${agentPersona}". The software development project is now complete.
 
-    Original Goal: "${prompt}"
-
-    Final Code was generated for these files: ${Object.keys(projectFiles).join(', ')}
+    Original Project Goal: "${prompt}"
+    Final Code Files Generated: ${Object.keys(projectFiles).join(', ')}
+    // Consider adding context: const filesPayload = JSON.stringify(projectFiles); // if sending code is too much, stick to filenames
 
     Instructions:
-    Provide a brief reflection on the project.
+    Reflect on the project. Provide:
+    1.  A "summary" of what was built (string).
+    2.  Key "strengths" of the final generated application (array of strings).
+    3.  Potential "improvements" or next steps that could be taken (array of strings).
 
-    Return a single JSON object with the keys "summary" (what was built), "strengths" (what this implementation does well), and "improvements" (potential next steps or enhancements).`;
+    Respond with a single, valid JSON object containing only the keys: "summary" (string), "strengths" (array of strings), and "improvements" (array of strings).`;
 
     const result = await callGeminiAPI(llmPrompt, apiKey, true);
 
